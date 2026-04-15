@@ -197,6 +197,12 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
 	oauthToken := isClaudeOAuthToken(apiKey)
 	clientSource := detectOAuthClientSource(getClientUserAgent(ctx))
 	var oauthToolNamesReverseMap map[string]string
+	// For non-OpenCode OAuth clients, default effort to "medium" when thinking is
+	// adaptive but no effort is specified. This prevents bare adaptive-thinking
+	// requests which may look unusual to Anthropic's fingerprinting.
+	if oauthToken && clientSource != oauthClientOpenCode {
+		bodyForUpstream = ensureDefaultEffort(bodyForUpstream, "medium")
+	}
 	if oauthToken {
 		bodyForUpstream, oauthToolNamesReverseMap = prepareClaudeOAuthToolNamesForUpstream(bodyForUpstream, claudeToolPrefix, auth.ToolPrefixDisabled())
 	}
@@ -377,6 +383,9 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 	oauthToken := isClaudeOAuthToken(apiKey)
 	clientSourceStream := detectOAuthClientSource(getClientUserAgent(ctx))
 	var oauthToolNamesReverseMap map[string]string
+	if oauthToken && clientSourceStream != oauthClientOpenCode {
+		bodyForUpstream = ensureDefaultEffort(bodyForUpstream, "medium")
+	}
 	if oauthToken {
 		bodyForUpstream, oauthToolNamesReverseMap = prepareClaudeOAuthToolNamesForUpstream(bodyForUpstream, claudeToolPrefix, auth.ToolPrefixDisabled())
 	}
@@ -1537,6 +1546,21 @@ func detectOAuthClientSource(userAgent string) oauthClientSource {
 	default:
 		return oauthClientOther
 	}
+}
+
+// ensureDefaultEffort injects output_config.effort into the request body when thinking
+// is adaptive but no effort level is specified. This prevents bare adaptive-thinking
+// requests from non-OpenCode clients, which may be unusual compared to real Claude Code.
+func ensureDefaultEffort(body []byte, defaultEffort string) []byte {
+	thinkingType := gjson.GetBytes(body, "thinking.type").String()
+	if thinkingType != "adaptive" {
+		return body
+	}
+	if gjson.GetBytes(body, "output_config.effort").Exists() {
+		return body
+	}
+	body, _ = sjson.SetBytes(body, "output_config.effort", defaultEffort)
+	return body
 }
 
 // getClientUserAgent extracts the client User-Agent from the gin context.
