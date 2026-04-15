@@ -233,14 +233,14 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
 	oauthToken := isClaudeOAuthToken(apiKey)
 	clientSource := detectOAuthClientSource(getClientUserAgent(ctx))
 	var oauthToolNamesReverseMap map[string]string
-	// For non-OpenCode OAuth clients, default effort to "medium" when thinking is
-	// adaptive but no effort is specified. This prevents bare adaptive-thinking
-	// requests which may look unusual to Anthropic's fingerprinting.
-	if oauthToken && clientSource != oauthClientOpenCode {
-		bodyForUpstream = ensureDefaultEffort(bodyForUpstream, "medium")
-	}
 	if oauthToken {
 		bodyForUpstream, oauthToolNamesReverseMap = prepareClaudeOAuthToolNamesForUpstream(bodyForUpstream, claudeToolPrefix, auth.ToolPrefixDisabled())
+		// For non-OpenCode OAuth clients, default effort to "medium" when thinking is
+		// adaptive but no effort is specified. This runs after the OAuth tool-name
+		// transforms so it is not overwritten by body reconstruction.
+		if clientSource != oauthClientOpenCode {
+			bodyForUpstream = ensureDefaultEffort(bodyForUpstream, "medium")
+		}
 	}
 	bodyForUpstream = sanitizeClaudeMessagesForClaudeUpstreamWithDebug(ctx, bodyForUpstream, baseModel)
 	// Enable cch signing by default for OAuth tokens (not just experimental flag).
@@ -430,11 +430,11 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 	oauthToken := isClaudeOAuthToken(apiKey)
 	clientSourceStream := detectOAuthClientSource(getClientUserAgent(ctx))
 	var oauthToolNamesReverseMap map[string]string
-	if oauthToken && clientSourceStream != oauthClientOpenCode {
-		bodyForUpstream = ensureDefaultEffort(bodyForUpstream, "medium")
-	}
 	if oauthToken {
 		bodyForUpstream, oauthToolNamesReverseMap = prepareClaudeOAuthToolNamesForUpstream(bodyForUpstream, claudeToolPrefix, auth.ToolPrefixDisabled())
+		if clientSourceStream != oauthClientOpenCode {
+			bodyForUpstream = ensureDefaultEffort(bodyForUpstream, "medium")
+		}
 	}
 	bodyForUpstream = sanitizeClaudeMessagesForClaudeUpstreamWithDebug(ctx, bodyForUpstream, baseModel)
 	// Enable cch signing by default for OAuth tokens (not just experimental flag).
@@ -687,6 +687,10 @@ func (e *ClaudeExecutor) CountTokens(ctx context.Context, auth *cliproxyauth.Aut
 	oauthTokenCT := isClaudeOAuthToken(apiKey)
 	if oauthTokenCT {
 		body, _ = prepareClaudeOAuthToolNamesForUpstream(body, claudeToolPrefix, auth.ToolPrefixDisabled())
+		clientSourceCT := detectOAuthClientSource(getClientUserAgent(ctx))
+		if clientSourceCT != oauthClientOpenCode {
+			body = ensureDefaultEffort(body, "medium")
+		}
 	}
 	body = sanitizeClaudeMessagesForClaudeUpstreamWithDebug(ctx, body, baseModel)
 
