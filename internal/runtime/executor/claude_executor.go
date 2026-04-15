@@ -1181,7 +1181,8 @@ func remapOAuthToolNames(body []byte) ([]byte, map[string]string) {
 				return true
 			}
 
-			newName, ok := oauthToolRenameMap[name]
+			nameLower := strings.ToLower(name)
+			newName, ok := oauthToolRenameMap[nameLower]
 			if !ok {
 				return true
 			}
@@ -1206,17 +1207,23 @@ func remapOAuthToolNames(body []byte) ([]byte, map[string]string) {
 		body, _ = sjson.SetRawBytes(body, "tools", []byte(toolsJSON.String()))
 	}
 
-	// 2. Rename tool_choice if it references a known tool
+	// 2. Rename or drop tool_choice if it references a known/unknown tool
 	toolChoiceType := gjson.GetBytes(body, "tool_choice.type").String()
 	if toolChoiceType == "tool" {
 		tcName := gjson.GetBytes(body, "tool_choice.name").String()
+		tcNameLower := strings.ToLower(tcName)
 		if oauthToolsToRemove[tcName] {
-			// The chosen tool was removed from the tools array, so drop tool_choice to
-			// keep the payload internally consistent and fall back to normal auto tool use.
+			// Explicitly removed tool — drop tool_choice.
 			body, _ = sjson.DeleteBytes(body, "tool_choice")
-		} else if newName, ok := oauthToolRenameMap[tcName]; ok && newName != tcName {
-			body, _ = sjson.SetBytes(body, "tool_choice.name", newName)
-			recordRename(tcName, newName)
+		} else if newName, ok := oauthToolRenameMap[tcNameLower]; ok {
+			if newName != tcName {
+				body, _ = sjson.SetBytes(body, "tool_choice.name", newName)
+				recordRename(tcName, newName)
+			}
+		} else {
+			// Unmapped tool (e.g. lsp_*, session_*) — was stripped from tools[],
+			// so drop tool_choice to keep payload consistent.
+			body, _ = sjson.DeleteBytes(body, "tool_choice")
 		}
 	}
 
