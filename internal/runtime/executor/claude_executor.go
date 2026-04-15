@@ -78,7 +78,7 @@ var oauthToolRenameMap = map[string]string{
 // response to `bash`, causing Amp to reject the tool_use as unknown).
 
 // oauthToolsToRemove lists tool names that must be stripped from OAuth requests
-// even after remapping. Currently empty — all tools are mapped instead of removed.
+// even before applying the allowlist of Claude Code-compatible tool names.
 var oauthToolsToRemove = map[string]bool{}
 
 // Anthropic-compatible upstreams may reject or even crash when Claude models
@@ -1181,8 +1181,13 @@ func remapOAuthToolNames(body []byte) ([]byte, map[string]string) {
 				return true
 			}
 
+			newName, ok := oauthToolRenameMap[name]
+			if !ok {
+				return true
+			}
+
 			toolJSON := tool.Raw
-			if newName, ok := oauthToolRenameMap[name]; ok && newName != name {
+			if newName != name {
 				updatedTool, err := sjson.Set(toolJSON, "name", newName)
 				if err == nil {
 					toolJSON = updatedTool
@@ -1541,9 +1546,9 @@ const (
 // detectOAuthClientSource identifies the downstream client from its User-Agent.
 // This is used ONLY on the Claude OAuth path to apply client-specific transformations.
 // ALL OAuth clients get: forced baseline device profile, full default Anthropic-Beta,
-// and effort beta appended. Client-specific differences:
-// OpenCode: preserves client tools (only remaps known names, keeps unmapped tools).
-// OpenClaw and Other: strict tool filtering (unmapped tools stripped), default effort injected.
+// effort beta appended, and unmapped tools stripped. Client-specific differences:
+// OpenCode: keeps client effort value (no default injection).
+// OpenClaw and Other: also injects default effort="medium" when missing.
 // Unknown clients are treated as strict (same as OpenClaw) as a safety default.
 func detectOAuthClientSource(userAgent string) oauthClientSource {
 	ua := strings.TrimSpace(userAgent)
