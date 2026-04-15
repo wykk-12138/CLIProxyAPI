@@ -231,6 +231,7 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
 	bodyForTranslation := body
 	bodyForUpstream := body
 	oauthToken := isClaudeOAuthToken(apiKey)
+	clientSource := detectOAuthClientSource(getClientUserAgent(ctx))
 	var oauthToolNamesReverseMap map[string]string
 	if oauthToken {
 		bodyForUpstream, oauthToolNamesReverseMap = prepareClaudeOAuthToolNamesForUpstream(bodyForUpstream, claudeToolPrefix, auth.ToolPrefixDisabled())
@@ -248,8 +249,14 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
 	if err != nil {
 		return resp, err
 	}
-	if errHeaders := applyClaudeHeaders(httpReq, auth, apiKey, false, extraBetas, e.cfg); errHeaders != nil {
-		return resp, errHeaders
+	if oauthToken {
+		if errHeaders := applyClaudeHeaders(httpReq, auth, apiKey, false, extraBetas, e.cfg, clientSource); errHeaders != nil {
+			return resp, errHeaders
+		}
+	} else {
+		if errHeaders := applyClaudeHeaders(httpReq, auth, apiKey, false, extraBetas, e.cfg); errHeaders != nil {
+			return resp, errHeaders
+		}
 	}
 	var authID, authLabel, authType, authValue string
 	if auth != nil {
@@ -415,6 +422,7 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 	bodyForTranslation := body
 	bodyForUpstream := body
 	oauthToken := isClaudeOAuthToken(apiKey)
+	clientSourceStream := detectOAuthClientSource(getClientUserAgent(ctx))
 	var oauthToolNamesReverseMap map[string]string
 	if oauthToken {
 		bodyForUpstream, oauthToolNamesReverseMap = prepareClaudeOAuthToolNamesForUpstream(bodyForUpstream, claudeToolPrefix, auth.ToolPrefixDisabled())
@@ -431,8 +439,14 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 	if err != nil {
 		return nil, err
 	}
-	if errHeaders := applyClaudeHeaders(httpReq, auth, apiKey, true, extraBetas, e.cfg); errHeaders != nil {
-		return nil, errHeaders
+	if oauthToken {
+		if errHeaders := applyClaudeHeaders(httpReq, auth, apiKey, true, extraBetas, e.cfg, clientSourceStream); errHeaders != nil {
+			return nil, errHeaders
+		}
+	} else {
+		if errHeaders := applyClaudeHeaders(httpReq, auth, apiKey, true, extraBetas, e.cfg); errHeaders != nil {
+			return nil, errHeaders
+		}
 	}
 	var authID, authLabel, authType, authValue string
 	if auth != nil {
@@ -661,7 +675,8 @@ func (e *ClaudeExecutor) CountTokens(ctx context.Context, auth *cliproxyauth.Aut
 	// Extract betas from body and convert to header (for count_tokens too)
 	var extraBetas []string
 	extraBetas, body = extractAndRemoveBetas(body)
-	if isClaudeOAuthToken(apiKey) {
+	oauthTokenCT := isClaudeOAuthToken(apiKey)
+	if oauthTokenCT {
 		body, _ = prepareClaudeOAuthToolNamesForUpstream(body, claudeToolPrefix, auth.ToolPrefixDisabled())
 	}
 	body = sanitizeClaudeMessagesForClaudeUpstreamWithDebug(ctx, body, baseModel)
@@ -671,8 +686,15 @@ func (e *ClaudeExecutor) CountTokens(ctx context.Context, auth *cliproxyauth.Aut
 	if err != nil {
 		return cliproxyexecutor.Response{}, err
 	}
-	if errHeaders := applyClaudeHeaders(httpReq, auth, apiKey, false, extraBetas, e.cfg); errHeaders != nil {
-		return cliproxyexecutor.Response{}, errHeaders
+	if oauthTokenCT {
+		clientSourceCT := detectOAuthClientSource(getClientUserAgent(ctx))
+		if errHeaders := applyClaudeHeaders(httpReq, auth, apiKey, false, extraBetas, e.cfg, clientSourceCT); errHeaders != nil {
+			return cliproxyexecutor.Response{}, errHeaders
+		}
+	} else {
+		if errHeaders := applyClaudeHeaders(httpReq, auth, apiKey, false, extraBetas, e.cfg); errHeaders != nil {
+			return cliproxyexecutor.Response{}, errHeaders
+		}
 	}
 	var authID, authLabel, authType, authValue string
 	if auth != nil {
@@ -972,7 +994,7 @@ func decodeResponseBody(body io.ReadCloser, contentEncoding string) (io.ReadClos
 	return body, nil
 }
 
-func applyClaudeHeaders(r *http.Request, auth *cliproxyauth.Auth, apiKey string, stream bool, extraBetas []string, cfg *config.Config) error {
+func applyClaudeHeaders(r *http.Request, auth *cliproxyauth.Auth, apiKey string, stream bool, extraBetas []string, cfg *config.Config, oauthClientOpts ...oauthClientSource) error {
 	if r == nil {
 		return nil
 	}
@@ -1013,14 +1035,23 @@ func applyClaudeHeaders(r *http.Request, auth *cliproxyauth.Auth, apiKey string,
 	}
 
 	baseBetas := "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,context-management-2025-06-27,prompt-caching-scope-2026-01-05,structured-outputs-2025-12-15,fast-mode-2026-02-01,redact-thinking-2026-02-12,token-efficient-tools-2026-03-28"
-	if val := strings.TrimSpace(ginHeaders.Get("Anthropic-Beta")); val != "" {
-		baseBetas = val
-		if !strings.Contains(val, "oauth") {
-			baseBetas += ",oauth-2025-04-20"
+	// For non-OpenCode OAuth clients (e.g. OpenClaw), ignore the client's Anthropic-Beta
+	// header entirely and use the full Claude Code default beta set. Client betas like
+	// "fine-grained-tool-streaming-2025-05-14" alone are a strong third-party fingerprint.
+	isNonOpenCodeOAuth := len(oauthClientOpts) > 0 && oauthClientOpts[0] != oauthClientOpenCode
+	if !isNonOpenCodeOAuth {
+		if val := strings.TrimSpace(ginHeaders.Get("Anthropic-Beta")); val != "" {
+			baseBetas = val
+			if !strings.Contains(val, "oauth") {
+				baseBetas += ",oauth-2025-04-20"
+			}
 		}
 	}
 	if !strings.Contains(baseBetas, "interleaved-thinking") {
 		baseBetas += ",interleaved-thinking-2025-05-14"
+	}
+	if isNonOpenCodeOAuth && !strings.Contains(baseBetas, "effort") {
+		baseBetas += ",effort-2025-11-24"
 	}
 
 	// Merge extra betas from request body and request flags.
@@ -1077,7 +1108,13 @@ func applyClaudeHeaders(r *http.Request, auth *cliproxyauth.Auth, apiKey string,
 	// Legacy mode keeps OS/Arch runtime-derived; stabilized mode pins OS/Arch
 	// to the configured baseline while still allowing newer official
 	// User-Agent/package/runtime tuples to upgrade the software fingerprint.
-	if stabilizeDeviceProfile {
+	// For non-OpenCode OAuth clients, always force baseline device profile to prevent
+	// client Stainless headers (e.g. SDK 0.73.0, Node v25.9.0) from leaking upstream.
+	if stabilizeDeviceProfile || isNonOpenCodeOAuth {
+		if !stabilizeDeviceProfile {
+			// Non-OpenCode OAuth without explicit stabilization: use default baseline directly
+			deviceProfile = helps.DefaultClaudeDeviceProfilePublic(cfg)
+		}
 		helps.ApplyClaudeDeviceProfileHeaders(r, deviceProfile)
 	} else {
 		helps.ApplyClaudeLegacyDeviceHeaders(r, ginHeaders, cfg)
@@ -1549,6 +1586,29 @@ func stripClaudeToolPrefixFromStreamLine(line []byte, prefix string) []byte {
 		return append([]byte("data: "), updated...)
 	}
 	return updated
+}
+
+// oauthClientSource represents the detected downstream client type for OAuth request handling.
+type oauthClientSource int
+
+const (
+	oauthClientOpenCode oauthClientSource = iota // OpenCode (UA starts with "opencode/")
+	oauthClientOpenClaw                          // OpenClaw (UA starts with "Anthropic/JS")
+	oauthClientOther                             // Unknown third-party client
+)
+
+// detectOAuthClientSource identifies the downstream client from its User-Agent.
+// This is used ONLY on the Claude OAuth path to apply client-specific transformations.
+func detectOAuthClientSource(userAgent string) oauthClientSource {
+	ua := strings.TrimSpace(userAgent)
+	switch {
+	case strings.HasPrefix(ua, "opencode/"):
+		return oauthClientOpenCode
+	case strings.HasPrefix(ua, "Anthropic/JS"):
+		return oauthClientOpenClaw
+	default:
+		return oauthClientOther
+	}
 }
 
 // getClientUserAgent extracts the client User-Agent from the gin context.
