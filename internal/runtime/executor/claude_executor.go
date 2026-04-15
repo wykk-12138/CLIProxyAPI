@@ -171,6 +171,7 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
 	requestPath := helps.PayloadRequestPath(opts)
 	body = helps.ApplyPayloadConfigWithRoot(e.cfg, baseModel, to.String(), "", body, originalTranslated, requestedModel, requestPath)
 	body = ensureModelMaxTokens(body, baseModel)
+	body = forceOpusMaxTokens(body, baseModel)
 
 	// Disable thinking if tool_choice forces tool use (Anthropic API constraint)
 	body = disableThinkingIfToolChoiceForced(body)
@@ -369,6 +370,7 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 	requestPath := helps.PayloadRequestPath(opts)
 	body = helps.ApplyPayloadConfigWithRoot(e.cfg, baseModel, to.String(), "", body, originalTranslated, requestedModel, requestPath)
 	body = ensureModelMaxTokens(body, baseModel)
+	body = forceOpusMaxTokens(body, baseModel)
 
 	// Disable thinking if tool_choice forces tool use (Anthropic API constraint)
 	body = disableThinkingIfToolChoiceForced(body)
@@ -2462,5 +2464,35 @@ func ensureModelMaxTokens(body []byte, modelID string) []byte {
 		}
 	}
 
+	return body
+}
+
+// forceOpusMaxTokens unconditionally overrides max_tokens for Claude Opus 4.6
+// regardless of what the client sent. Personal preference: Opus should always use
+// a large completion budget, and when running at max effort, the full 128k.
+//
+//   - model contains "opus" (and "4-6" / "4.6"): max_tokens = 64000
+//   - additionally when output_config.effort == "max":             max_tokens = 128000
+//
+// This runs AFTER ensureModelMaxTokens and ApplyThinking so that the effort value
+// (which may have been set by the `-max` model suffix via thinking.ParseSuffix) is
+// already populated in output_config.effort.
+func forceOpusMaxTokens(body []byte, modelID string) []byte {
+	if len(body) == 0 || !gjson.ValidBytes(body) {
+		return body
+	}
+	lowerModel := strings.ToLower(strings.TrimSpace(modelID))
+	if !strings.Contains(lowerModel, "opus") {
+		return body
+	}
+	if !strings.Contains(lowerModel, "4-6") && !strings.Contains(lowerModel, "4.6") {
+		return body
+	}
+
+	maxTokens := 64000
+	if effort := strings.ToLower(gjson.GetBytes(body, "output_config.effort").String()); effort == "max" {
+		maxTokens = 128000
+	}
+	body, _ = sjson.SetBytes(body, "max_tokens", maxTokens)
 	return body
 }
