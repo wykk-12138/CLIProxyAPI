@@ -1230,12 +1230,6 @@ func remapOAuthToolNames(body []byte) ([]byte, map[string]string) {
 			body, _ = sjson.DeleteBytes(body, "tool_choice")
 		}
 	}
-		} else {
-			// Unmapped tool (e.g. lsp_*, session_*) — was stripped from tools[],
-			// so drop tool_choice to keep payload consistent.
-			body, _ = sjson.DeleteBytes(body, "tool_choice")
-		}
-	}
 
 	// 3. Rename tool references in messages
 	messages := gjson.GetBytes(body, "messages")
