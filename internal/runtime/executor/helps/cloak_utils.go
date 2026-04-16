@@ -3,33 +3,69 @@ package helps
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"regexp"
+	"encoding/json"
 	"strings"
 
 	"github.com/google/uuid"
 )
 
-// userIDPattern matches Claude Code format: user_[64-hex]_account_[uuid]_session_[uuid]
-var userIDPattern = regexp.MustCompile(`^user_[a-fA-F0-9]{64}_account_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}_session_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
-
-// generateFakeUserID generates a fake user ID in Claude Code format.
-// Format: user_[64-hex-chars]_account_[UUID-v4]_session_[UUID-v4]
-func generateFakeUserID() string {
-	hexBytes := make([]byte, 32)
-	_, _ = rand.Read(hexBytes)
-	hexPart := hex.EncodeToString(hexBytes)
-	accountUUID := uuid.New().String()
-	sessionUUID := uuid.New().String()
-	return "user_" + hexPart + "_account_" + accountUUID + "_session_" + sessionUUID
+// claudeUserIDPayload is the JSON structure for Claude Code 2.1.110+ metadata.user_id.
+type claudeUserIDPayload struct {
+	DeviceID    string `json:"device_id"`
+	AccountUUID string `json:"account_uuid"`
+	SessionID   string `json:"session_id"`
 }
 
-// isValidUserID checks if a user ID matches Claude Code format.
+// generateFakeUserID generates a fake user ID in Claude Code 2.1.110+ JSON format.
+// Format: {"device_id":"<64-hex>","account_uuid":"<uuid>","session_id":"<uuid>"}
+// If deviceID or accountUUID are provided (from config), they are used instead of random values.
+func generateFakeUserID(deviceID, accountUUID string) string {
+	if deviceID == "" {
+		hexBytes := make([]byte, 32)
+		_, _ = rand.Read(hexBytes)
+		deviceID = hex.EncodeToString(hexBytes)
+	}
+	if accountUUID == "" {
+		accountUUID = uuid.New().String()
+	}
+	sessionID := uuid.New().String()
+
+	p := claudeUserIDPayload{
+		DeviceID:    deviceID,
+		AccountUUID: accountUUID,
+		SessionID:   sessionID,
+	}
+	b, _ := json.Marshal(p)
+	return string(b)
+}
+
+// isValidUserID checks if a user ID matches Claude Code 2.1.110+ JSON format
+// or the legacy string format.
 func isValidUserID(userID string) bool {
-	return userIDPattern.MatchString(userID)
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return false
+	}
+	// New JSON format: {"device_id":"...","account_uuid":"...","session_id":"..."}
+	if strings.HasPrefix(userID, "{") {
+		var p claudeUserIDPayload
+		if err := json.Unmarshal([]byte(userID), &p); err != nil {
+			return false
+		}
+		return p.DeviceID != "" && p.AccountUUID != "" && p.SessionID != ""
+	}
+	// Legacy format: user_[64-hex]_account_[uuid]_session_[uuid]
+	return strings.HasPrefix(userID, "user_") && strings.Contains(userID, "_account_") && strings.Contains(userID, "_session_")
 }
 
+// GenerateFakeUserID generates a fake user ID with random device_id and account_uuid.
 func GenerateFakeUserID() string {
-	return generateFakeUserID()
+	return generateFakeUserID("", "")
+}
+
+// GenerateFakeUserIDWithConfig generates a fake user ID, using config values when available.
+func GenerateFakeUserIDWithConfig(deviceID, accountUUID string) string {
+	return generateFakeUserID(deviceID, accountUUID)
 }
 
 func IsValidUserID(userID string) bool {

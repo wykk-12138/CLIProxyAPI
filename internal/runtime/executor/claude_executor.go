@@ -235,13 +235,15 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
 	clientSource := detectOAuthClientSource(getClientUserAgent(ctx))
 	var oauthToolNamesReverseMap map[string]string
 	if oauthToken {
+		if !gjson.GetBytes(bodyForUpstream, "context_management").Exists() {
+			bodyForUpstream, _ = sjson.SetRawBytes(bodyForUpstream, "context_management",
+				[]byte(`{"edits":[{"type":"clear_thinking_20251015","keep":"all"}]}`))
+		}
 		bodyForUpstream, oauthToolNamesReverseMap = prepareClaudeOAuthToolNamesForUpstream(bodyForUpstream, claudeToolPrefix, auth.ToolPrefixDisabled())
-		// For non-OpenCode OAuth clients, default effort to "medium" when thinking is
-		// adaptive but no effort is specified. This runs after the OAuth tool-name
-		// transforms so it is not overwritten by body reconstruction.
 		if clientSource != oauthClientOpenCode {
 			bodyForUpstream = ensureDefaultEffort(bodyForUpstream, "medium")
 		}
+		bodyForUpstream = signAnthropicMessagesBody(bodyForUpstream)
 	}
 	bodyForUpstream = sanitizeClaudeMessagesForClaudeUpstreamWithDebug(ctx, bodyForUpstream, baseModel)
 	// Enable cch signing by default for OAuth tokens (not just experimental flag).
@@ -433,10 +435,15 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 	clientSourceStream := detectOAuthClientSource(getClientUserAgent(ctx))
 	var oauthToolNamesReverseMap map[string]string
 	if oauthToken {
+		if !gjson.GetBytes(bodyForUpstream, "context_management").Exists() {
+			bodyForUpstream, _ = sjson.SetRawBytes(bodyForUpstream, "context_management",
+				[]byte(`{"edits":[{"type":"clear_thinking_20251015","keep":"all"}]}`))
+		}
 		bodyForUpstream, oauthToolNamesReverseMap = prepareClaudeOAuthToolNamesForUpstream(bodyForUpstream, claudeToolPrefix, auth.ToolPrefixDisabled())
 		if clientSourceStream != oauthClientOpenCode {
 			bodyForUpstream = ensureDefaultEffort(bodyForUpstream, "medium")
 		}
+		bodyForUpstream = signAnthropicMessagesBody(bodyForUpstream)
 	}
 	bodyForUpstream = sanitizeClaudeMessagesForClaudeUpstreamWithDebug(ctx, bodyForUpstream, baseModel)
 	// Enable cch signing by default for OAuth tokens (not just experimental flag).
@@ -1049,7 +1056,7 @@ func applyClaudeHeaders(r *http.Request, auth *cliproxyauth.Auth, apiKey string,
 		}
 	}
 
-	baseBetas := "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,context-management-2025-06-27,prompt-caching-scope-2026-01-05,structured-outputs-2025-12-15,fast-mode-2026-02-01,redact-thinking-2026-02-12,token-efficient-tools-2026-03-28"
+	baseBetas := "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,context-management-2025-06-27,prompt-caching-scope-2026-01-05,advisor-tool-2026-03-01,advanced-tool-use-2025-11-20,effort-2025-11-24"
 	// For ALL OAuth clients (OpenCode, OpenClaw, etc.), ignore the client's Anthropic-Beta
 	// header and use the full Claude Code default beta set. Client betas are an incomplete
 	// subset that acts as a strong third-party fingerprint for Anthropic's detection.
@@ -1066,7 +1073,9 @@ func applyClaudeHeaders(r *http.Request, auth *cliproxyauth.Auth, apiKey string,
 	if !strings.Contains(baseBetas, "interleaved-thinking") {
 		baseBetas += ",interleaved-thinking-2025-05-14"
 	}
-	if isOAuthRequest && !strings.Contains(baseBetas, "effort") {
+	// effort-2025-11-24 is already in baseBetas; ensure it's present for non-OAuth paths
+	// where client betas may have been used as base.
+	if !strings.Contains(baseBetas, "effort") {
 		baseBetas += ",effort-2025-11-24"
 	}
 
@@ -1090,10 +1099,7 @@ func applyClaudeHeaders(r *http.Request, auth *cliproxyauth.Auth, apiKey string,
 	r.Header.Set("Anthropic-Beta", baseBetas)
 
 	misc.EnsureHeader(r.Header, ginHeaders, "Anthropic-Version", "2023-06-01")
-	// Only set browser access header for API key mode; real Claude Code CLI does not send it.
-	if useAPIKey {
-		misc.EnsureHeader(r.Header, ginHeaders, "Anthropic-Dangerous-Direct-Browser-Access", "true")
-	}
+	// Real Claude Code 2.1.110 always sends this header for both API key and OAuth modes.
 	misc.EnsureHeader(r.Header, ginHeaders, "X-App", "cli")
 	// Values below match Claude Code 2.1.108 / @anthropic-ai/sdk 0.81.0.
 	misc.EnsureHeader(r.Header, ginHeaders, "X-Stainless-Retry-Count", "0")
@@ -1111,16 +1117,13 @@ func applyClaudeHeaders(r *http.Request, auth *cliproxyauth.Auth, apiKey string,
 		misc.EnsureHeader(r.Header, ginHeaders, "x-client-request-id", uuid.New().String())
 	}
 	r.Header.Set("Connection", "keep-alive")
-	if stream {
-		r.Header.Set("Accept", "text/event-stream")
-		// SSE streams must not be compressed: the downstream scanner reads
-		// line-delimited text and cannot parse compressed bytes.  Using
-		// "identity" tells the upstream to send an uncompressed stream.
-		r.Header.Set("Accept-Encoding", "identity")
-	} else {
-		r.Header.Set("Accept", "application/json")
-		r.Header.Set("Accept-Encoding", "gzip, deflate, br, zstd")
-	}
+	// Real Claude Code 2.1.110 always sends application/json + compressed encoding,
+	// even for streaming requests (stream=true is in the body, not Accept header).
+	r.Header.Set("Accept", "application/json")
+	r.Header.Set("Accept-Encoding", "br, gzip, deflate")
+	r.Header.Set("accept-language", "*")
+	r.Header.Set("sec-fetch-mode", "cors")
+	r.Header.Set("Anthropic-Dangerous-Direct-Browser-Access", "true")
 	// Legacy mode keeps OS/Arch runtime-derived; stabilized mode pins OS/Arch
 	// to the configured baseline while still allowing newer official
 	// User-Agent/package/runtime tuples to upgrade the software fingerprint.
@@ -1139,12 +1142,8 @@ func applyClaudeHeaders(r *http.Request, auth *cliproxyauth.Auth, apiKey string,
 		attrs = auth.Attributes
 	}
 	util.ApplyCustomHeadersFromAttrs(r, attrs)
-	// Re-enforce Accept-Encoding: identity after ApplyCustomHeadersFromAttrs, which
-	// may override it with a user-configured value.  Compressed SSE breaks the line
-	// scanner regardless of user preference, so this is non-negotiable for streams.
-	if stream {
-		r.Header.Set("Accept-Encoding", "identity")
-	}
+	// Real Claude Code uses compressed encoding even for streams.
+	// CLIProxyAPI handles decompression via decodeResponseBody before scanning.
 	return nil
 }
 
@@ -1165,7 +1164,7 @@ func claudeCreds(a *cliproxyauth.Auth) (apiKey, baseURL string) {
 }
 
 func checkSystemInstructions(payload []byte) []byte {
-	return checkSystemInstructionsWithSigningMode(payload, false, false, false, "2.1.108", "", "")
+	return checkSystemInstructionsWithSigningMode(payload, false, false, false, "2.1.110", "", "")
 }
 
 func isClaudeOAuthToken(apiKey string) bool {
@@ -1731,33 +1730,28 @@ func getCloakConfigFromAuth(auth *cliproxyauth.Auth) (string, bool, []string, bo
 
 // injectFakeUserID generates and injects a fake user ID into the request metadata.
 // When useCache is false, a new user ID is generated for every call.
-func injectFakeUserID(ctx context.Context, payload []byte, apiKey string, useCache bool) ([]byte, error) {
-	generateID := func() (string, error) {
+// deviceID and accountUUID are optional config values from ClaudeHeaderDefaults.
+func injectFakeUserID(payload []byte, apiKey string, useCache bool, deviceID, accountUUID string) []byte {
+	generateID := func() string {
 		if useCache {
-			return helps.CachedUserIDRequired(ctx, apiKey)
+			return helps.CachedUserID(apiKey, deviceID, accountUUID)
 		}
-		return helps.GenerateFakeUserID(), nil
+		return helps.GenerateFakeUserIDWithConfig(deviceID, accountUUID)
 	}
 
 	metadata := gjson.GetBytes(payload, "metadata")
 	if !metadata.Exists() {
-		userID, errUserID := generateID()
-		if errUserID != nil {
-			return nil, errUserID
-		}
+		userID := generateID()
 		payload, _ = sjson.SetBytes(payload, "metadata.user_id", userID)
-		return payload, nil
+		return payload
 	}
 
 	existingUserID := gjson.GetBytes(payload, "metadata.user_id").String()
 	if existingUserID == "" || !helps.IsValidUserID(existingUserID) {
-		userID, errUserID := generateID()
-		if errUserID != nil {
-			return nil, errUserID
-		}
+		userID := generateID()
 		payload, _ = sjson.SetBytes(payload, "metadata.user_id", userID)
 	}
-	return payload, nil
+	return payload
 }
 
 // fingerprintSalt is the salt used by Claude Code to compute the 3-char build fingerprint.
@@ -1805,7 +1799,7 @@ func generateBillingHeader(payload []byte, experimentalCCHSigning bool, version,
 }
 
 func checkSystemInstructionsWithMode(payload []byte, strictMode bool) []byte {
-	return checkSystemInstructionsWithSigningMode(payload, strictMode, false, false, "2.1.108", "", "")
+	return checkSystemInstructionsWithSigningMode(payload, strictMode, false, false, "2.1.110", "", "")
 }
 
 // checkSystemInstructionsWithSigningMode injects Claude Code-style system blocks:
@@ -1859,7 +1853,7 @@ func checkSystemInstructionsWithSigningMode(payload []byte, strictMode bool, exp
 	// system[6]: using tools (dynamic)
 	// system[7]: tone and style (ClaudeCodeToneAndStyle)
 	// system[8]: output efficiency (ClaudeCodeOutputEfficiency)
-	introBlock := buildTextBlock(helps.ClaudeCodeIntro, nil)
+	introBlock := buildTextBlock(helps.ClaudeCodeIntro, map[string]string{"ttl": "1h", "scope": "global"})
 	systemBlock := buildTextBlock(helps.ClaudeCodeSystem, nil)
 	doingTasksBlock := buildTextBlock(helps.ClaudeCodeDoingTasks, nil)
 	actionsBlock := buildTextBlock(helps.ClaudeCodeActions, nil)
@@ -1924,11 +1918,12 @@ func buildTextBlock(text string, cacheControl map[string]string) string {
 	block := []byte(`{"type":"text"}`)
 	block, _ = sjson.SetBytes(block, "text", text)
 	if cacheControl != nil && len(cacheControl) > 0 {
-		// Build cache_control JSON manually to avoid sjson map marshaling issues.
-		// sjson.SetBytes with map[string]string may not produce expected structure.
 		cc := `{"type":"ephemeral"`
 		if t, ok := cacheControl["ttl"]; ok {
 			cc += fmt.Sprintf(`,"ttl":"%s"`, t)
+		}
+		if s, ok := cacheControl["scope"]; ok {
+			cc += fmt.Sprintf(`,"scope":"%s"`, s)
 		}
 		cc += "}"
 		block, _ = sjson.SetRawBytes(block, "cache_control", []byte(cc))
@@ -2033,12 +2028,13 @@ func applyCloaking(ctx context.Context, cfg *config.Config, auth *cliproxyauth.A
 		payload = checkSystemInstructionsWithSigningMode(payload, strictMode, useCCHSigning, oauthToken, billingVersion, entrypoint, workload)
 	}
 
-	// Inject fake user ID
-	var errFakeUserID error
-	payload, errFakeUserID = injectFakeUserID(ctx, payload, apiKey, cacheUserID)
-	if errFakeUserID != nil {
-		return nil, errFakeUserID
+	// Inject fake user ID (using device-id/account-uuid from config if available)
+	var cfgDeviceID, cfgAccountUUID string
+	if cfg != nil {
+		cfgDeviceID = strings.TrimSpace(cfg.ClaudeHeaderDefaults.DeviceID)
+		cfgAccountUUID = strings.TrimSpace(cfg.ClaudeHeaderDefaults.AccountUUID)
 	}
+	payload = injectFakeUserID(payload, apiKey, cacheUserID, cfgDeviceID, cfgAccountUUID)
 
 	// Apply sensitive word obfuscation
 	if len(sensitiveWords) > 0 {
@@ -2439,7 +2435,7 @@ func injectMessagesCacheControl(payload []byte) []byte {
 		contentCount := int(content.Get("#").Int())
 		if contentCount > 0 {
 			cacheControlPath := fmt.Sprintf("messages.%d.content.%d.cache_control", secondToLastUserIdx, contentCount-1)
-			result, err := sjson.SetBytes(payload, cacheControlPath, map[string]string{"type": "ephemeral"})
+			result, err := sjson.SetRawBytes(payload, cacheControlPath, []byte(`{"type":"ephemeral","ttl":"1h"}`))
 			if err != nil {
 				log.Warnf("failed to inject cache_control into messages: %v", err)
 				return payload
@@ -2447,7 +2443,7 @@ func injectMessagesCacheControl(payload []byte) []byte {
 			payload = result
 		}
 	} else if content.Type == gjson.String {
-		// Convert string content to array with cache_control
+		// Convert string content to array with cache_control (1h TTL)
 		text := content.String()
 		newContent := []map[string]interface{}{
 			{
@@ -2455,6 +2451,7 @@ func injectMessagesCacheControl(payload []byte) []byte {
 				"text": text,
 				"cache_control": map[string]string{
 					"type": "ephemeral",
+					"ttl":  "1h",
 				},
 			},
 		}
@@ -2496,9 +2493,9 @@ func injectToolsCacheControl(payload []byte) []byte {
 		return payload
 	}
 
-	// Add cache_control to the last tool
+	// Add cache_control to the last tool (with 1h TTL matching real Claude Code 2.1.110)
 	lastToolPath := fmt.Sprintf("tools.%d.cache_control", toolCount-1)
-	result, err := sjson.SetBytes(payload, lastToolPath, map[string]string{"type": "ephemeral"})
+	result, err := sjson.SetRawBytes(payload, lastToolPath, []byte(`{"type":"ephemeral","ttl":"1h"}`))
 	if err != nil {
 		log.Warnf("failed to inject cache_control into tools array: %v", err)
 		return payload
@@ -2535,17 +2532,16 @@ func injectSystemCacheControl(payload []byte) []byte {
 			return payload
 		}
 
-		// Add cache_control to the last system element
+		// Add cache_control to the last system element (with 1h TTL matching real Claude Code 2.1.110)
 		lastSystemPath := fmt.Sprintf("system.%d.cache_control", count-1)
-		result, err := sjson.SetBytes(payload, lastSystemPath, map[string]string{"type": "ephemeral"})
+		result, err := sjson.SetRawBytes(payload, lastSystemPath, []byte(`{"type":"ephemeral","ttl":"1h"}`))
 		if err != nil {
 			log.Warnf("failed to inject cache_control into system array: %v", err)
 			return payload
 		}
 		payload = result
 	} else if system.Type == gjson.String {
-		// Convert string system prompt to array with cache_control
-		// "system": "text" -> "system": [{"type": "text", "text": "text", "cache_control": {"type": "ephemeral"}}]
+		// Convert string system prompt to array with cache_control (1h TTL)
 		text := system.String()
 		newSystem := []map[string]interface{}{
 			{
@@ -2553,6 +2549,7 @@ func injectSystemCacheControl(payload []byte) []byte {
 				"text": text,
 				"cache_control": map[string]string{
 					"type": "ephemeral",
+					"ttl":  "1h",
 				},
 			},
 		}
