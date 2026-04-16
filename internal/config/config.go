@@ -162,6 +162,8 @@ type ClaudeHeaderDefaults struct {
 	Arch                   string `yaml:"arch" json:"arch"`
 	Timeout                string `yaml:"timeout" json:"timeout"`
 	StabilizeDeviceProfile *bool  `yaml:"stabilize-device-profile,omitempty" json:"stabilize-device-profile,omitempty"`
+	DeviceID               string `yaml:"device-id,omitempty" json:"device-id,omitempty"`
+	AccountUUID            string `yaml:"account-uuid,omitempty" json:"account-uuid,omitempty"`
 }
 
 // CodexHeaderDefaults configures fallback header values injected into Codex
