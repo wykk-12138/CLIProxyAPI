@@ -1370,11 +1370,12 @@ func TestClaudeExecutor_ExecuteStream_SetsIdentityAcceptEncoding(t *testing.T) {
 		}
 	}
 
-	if gotEncoding != "identity" {
-		t.Errorf("Accept-Encoding = %q, want %q", gotEncoding, "identity")
+	// Real Claude Code 2.1.110 uses application/json + compressed encoding even for streams.
+	if gotEncoding != "br, gzip, deflate" {
+		t.Errorf("Accept-Encoding = %q, want %q", gotEncoding, "br, gzip, deflate")
 	}
-	if gotAccept != "text/event-stream" {
-		t.Errorf("Accept = %q, want %q", gotAccept, "text/event-stream")
+	if gotAccept != "application/json" {
+		t.Errorf("Accept = %q, want %q", gotAccept, "application/json")
 	}
 }
 
@@ -1408,8 +1409,9 @@ func TestClaudeExecutor_Execute_SetsCompressedAcceptEncoding(t *testing.T) {
 		t.Fatalf("Execute error: %v", err)
 	}
 
-	if gotEncoding != "gzip, deflate, br, zstd" {
-		t.Errorf("Accept-Encoding = %q, want %q", gotEncoding, "gzip, deflate, br, zstd")
+	// Real Claude Code 2.1.110 always uses "br, gzip, deflate" for all requests.
+	if gotEncoding != "br, gzip, deflate" {
+		t.Errorf("Accept-Encoding = %q, want %q", gotEncoding, "br, gzip, deflate")
 	}
 	if gotAccept != "application/json" {
 		t.Errorf("Accept = %q, want %q", gotAccept, "application/json")
@@ -1709,8 +1711,9 @@ func TestClaudeExecutor_ExecuteStream_AcceptEncodingOverrideCannotBypassIdentity
 		}
 	}
 
-	if gotEncoding != "identity" {
-		t.Errorf("Accept-Encoding = %q; stream path must enforce identity regardless of auth.Attributes override", gotEncoding)
+	// Real Claude Code 2.1.110 uses compressed encoding; custom header override should apply.
+	if gotEncoding != "gzip, deflate, br, zstd" {
+		t.Errorf("Accept-Encoding = %q; custom header override should be applied", gotEncoding)
 	}
 }
 

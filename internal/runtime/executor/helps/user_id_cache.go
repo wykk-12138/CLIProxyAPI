@@ -49,9 +49,11 @@ func userIDCacheKey(apiKey string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func CachedUserID(apiKey string) string {
+// CachedUserID returns a cached user ID for the given API key, generating one if needed.
+// deviceID and accountUUID are optional config values; empty strings trigger random generation.
+func CachedUserID(apiKey, deviceID, accountUUID string) string {
 	if apiKey == "" {
-		return generateFakeUserID()
+		return generateFakeUserID(deviceID, accountUUID)
 	}
 
 	userIDCacheCleanupOnce.Do(startUserIDCacheCleanup)
@@ -75,7 +77,7 @@ func CachedUserID(apiKey string) string {
 		userIDCacheMu.Unlock()
 	}
 
-	newID := generateFakeUserID()
+	newID := generateFakeUserID(deviceID, accountUUID)
 
 	userIDCacheMu.Lock()
 	entry, ok = userIDCache[key]
