@@ -1028,10 +1028,10 @@ func applyClaudeHeaders(r *http.Request, auth *cliproxyauth.Auth, apiKey string,
 		misc.EnsureHeader(r.Header, ginHeaders, "x-client-request-id", uuid.New().String())
 	}
 	r.Header.Set("Connection", "keep-alive")
-	// Real Claude Code 2.1.110 always sends application/json + compressed encoding,
-	// even for streaming requests (stream=true is in the body, not Accept header).
+	// Real Claude Code 2.1.112 interactive sends application/json + gzip, deflate
+	// (no brotli). Streaming also uses encoded body, not Accept header.
 	r.Header.Set("Accept", "application/json")
-	r.Header.Set("Accept-Encoding", "br, gzip, deflate")
+	r.Header.Set("Accept-Encoding", "gzip, deflate")
 	r.Header.Set("accept-language", "*")
 	r.Header.Set("sec-fetch-mode", "cors")
 	r.Header.Set("Anthropic-Dangerous-Direct-Browser-Access", "true")
@@ -1587,7 +1587,7 @@ func getClientUserAgent(ctx context.Context) string {
 }
 
 // parseEntrypointFromUA extracts the entrypoint from a Claude Code User-Agent.
-// Format: "claude-cli/x.y.z (external, sdk-cli)" → "sdk-cli"
+// Format: "claude-cli/x.y.z (external, cli)" → "cli"
 // Format: "claude-cli/x.y.z (external, vscode)"  → "vscode"
 // Returns "cli" if parsing fails or UA is not Claude Code, matching the
 // default entrypoint used by real Claude Code 2.1.112+ interactive mode.
