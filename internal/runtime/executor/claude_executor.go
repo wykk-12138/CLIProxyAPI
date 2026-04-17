@@ -203,6 +203,7 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
 			bodyForUpstream, _ = sjson.SetRawBytes(bodyForUpstream, "context_management",
 				[]byte(`{"edits":[{"type":"clear_thinking_20251015","keep":"all"}]}`))
 		}
+		bodyForUpstream = stripThinkingDisplay(bodyForUpstream)
 		bodyForUpstream, oauthToolNamesReverseMap = prepareClaudeOAuthToolNamesForUpstream(bodyForUpstream, claudeToolPrefix, auth.ToolPrefixDisabled())
 		if clientSource != oauthClientOpenCode {
 			bodyForUpstream = ensureDefaultEffort(bodyForUpstream, "medium")
@@ -390,6 +391,7 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 			bodyForUpstream, _ = sjson.SetRawBytes(bodyForUpstream, "context_management",
 				[]byte(`{"edits":[{"type":"clear_thinking_20251015","keep":"all"}]}`))
 		}
+		bodyForUpstream = stripThinkingDisplay(bodyForUpstream)
 		bodyForUpstream, oauthToolNamesReverseMap = prepareClaudeOAuthToolNamesForUpstream(bodyForUpstream, claudeToolPrefix, auth.ToolPrefixDisabled())
 		if clientSourceStream != oauthClientOpenCode {
 			bodyForUpstream = ensureDefaultEffort(bodyForUpstream, "medium")
@@ -805,6 +807,21 @@ func disableThinkingIfToolChoiceForced(body []byte) []byte {
 	return body
 }
 
+// stripThinkingDisplay removes the non-official `thinking.display` field
+// (e.g. "summarized") that some harnesses such as OpenCode inject. Real
+// Claude Code 2.1.112+ sends only `{"type":"adaptive"}` without `display`,
+// so leaving the field in place produces a third-party fingerprint.
+func stripThinkingDisplay(body []byte) []byte {
+	if len(body) == 0 || !gjson.ValidBytes(body) {
+		return body
+	}
+	if !gjson.GetBytes(body, "thinking.display").Exists() {
+		return body
+	}
+	body, _ = sjson.DeleteBytes(body, "thinking.display")
+	return body
+}
+
 // normalizeClaudeTemperatureForThinking keeps Anthropic message requests valid when
 // thinking is enabled. Anthropic rejects temperatures other than 1 when
 // thinking.type is enabled/adaptive/auto.
@@ -1089,7 +1106,7 @@ func claudeCreds(a *cliproxyauth.Auth) (apiKey, baseURL string) {
 }
 
 func checkSystemInstructions(payload []byte) []byte {
-	return checkSystemInstructionsWithSigningMode(payload, false, false, false, "2.1.110", "", "")
+	return checkSystemInstructionsWithSigningMode(payload, false, false, false, "2.1.112", "", "")
 }
 
 func isClaudeOAuthToken(apiKey string) bool {
@@ -1595,19 +1612,17 @@ func getClientUserAgent(ctx context.Context) string {
 }
 
 // parseEntrypointFromUA extracts the entrypoint from a Claude Code User-Agent.
-// Format: "claude-cli/x.y.z (external, cli)" → "cli"
-// Format: "claude-cli/x.y.z (external, vscode)" → "vscode"
-// Returns "cli" if parsing fails or UA is not Claude Code.
+// Format: "claude-cli/x.y.z (external, sdk-cli)" → "sdk-cli"
+// Format: "claude-cli/x.y.z (external, vscode)"  → "vscode"
+// Returns "sdk-cli" if parsing fails or UA is not Claude Code, matching the
+// default entrypoint used by real Claude Code 2.1.112+.
 func parseEntrypointFromUA(userAgent string) string {
-	// Find content inside parentheses
 	start := strings.Index(userAgent, "(")
 	end := strings.LastIndex(userAgent, ")")
 	if start < 0 || end <= start {
-		return "cli"
+		return "sdk-cli"
 	}
 	inner := userAgent[start+1 : end]
-	// Split by comma, take the second part (entrypoint is at index 1, after USER_TYPE)
-	// Format: "(USER_TYPE, ENTRYPOINT[, extra...])"
 	parts := strings.Split(inner, ",")
 	if len(parts) >= 2 {
 		ep := strings.TrimSpace(parts[1])
@@ -1615,7 +1630,7 @@ func parseEntrypointFromUA(userAgent string) string {
 			return ep
 		}
 	}
-	return "cli"
+	return "sdk-cli"
 }
 
 // getWorkloadFromContext extracts workload identifier from the gin request headers.
@@ -1703,7 +1718,7 @@ func computeFingerprint(messageText, version string) string {
 // Format: x-anthropic-billing-header: cc_version=<ver>.<build>; cc_entrypoint=<ep>; cch=<hash>; [cc_workload=<wl>;]
 func generateBillingHeader(payload []byte, experimentalCCHSigning bool, version, messageText, entrypoint, workload string) string {
 	if entrypoint == "" {
-		entrypoint = "cli"
+		entrypoint = "sdk-cli"
 	}
 	buildHash := computeFingerprint(messageText, version)
 	workloadPart := ""
@@ -1722,7 +1737,7 @@ func generateBillingHeader(payload []byte, experimentalCCHSigning bool, version,
 }
 
 func checkSystemInstructionsWithMode(payload []byte, strictMode bool) []byte {
-	return checkSystemInstructionsWithSigningMode(payload, strictMode, false, false, "2.1.110", "", "")
+	return checkSystemInstructionsWithSigningMode(payload, strictMode, false, false, "2.1.112", "", "")
 }
 
 // checkSystemInstructionsWithSigningMode injects Claude Code-style system blocks:
@@ -1763,7 +1778,7 @@ func checkSystemInstructionsWithSigningMode(payload []byte, strictMode bool, exp
 	// Build system blocks matching real Claude Code structure.
 	// Claude Code sends each section as a SEPARATE system[] entry (not concatenated).
 	// This matches the exact block structure that Claude Code's getSystemPrompt() returns.
-	agentBlock := buildTextBlock("You are Claude Code, Anthropic's official CLI for Claude.", nil)
+	agentBlock := buildTextBlock("You are a Claude agent, built on Anthropic's Claude Agent SDK.", nil)
 	usingToolsSection := helps.BuildUsingToolsSection(helps.ResolveTaskToolName(payload))
 
 	// Each section is a separate text block, matching Claude Code's array structure:
@@ -2510,14 +2525,16 @@ func ensureModelMaxTokens(body []byte, modelID string) []byte {
 	return body
 }
 
-// forceOpusMaxTokens unconditionally overrides max_tokens for Claude Opus 4.6
-// regardless of what the client sent. Personal preference: Opus should always use
-// a large completion budget, and when running at max effort, the full 128k.
+// forceOpusMaxTokens unconditionally overrides max_tokens for any Claude Opus
+// model regardless of what the client sent. Personal preference: Opus should
+// always use a large completion budget, and when running at max effort, the
+// full 128k.
 //
-//   - model contains "opus" (and "4-6" / "4.6"): max_tokens = 64000
+//   - model contains "opus": max_tokens = 64000
 //   - additionally when output_config.effort == "max":             max_tokens = 128000
 //
-// This runs AFTER ensureModelMaxTokens and ApplyThinking so that the effort value
+// Version-agnostic: matches any Opus variant (4-5, 4-6, 4-7, 5, ...). The rule
+// runs AFTER ensureModelMaxTokens and ApplyThinking so that the effort value
 // (which may have been set by the `-max` model suffix via thinking.ParseSuffix) is
 // already populated in output_config.effort.
 func forceOpusMaxTokens(body []byte, modelID string) []byte {
@@ -2526,9 +2543,6 @@ func forceOpusMaxTokens(body []byte, modelID string) []byte {
 	}
 	lowerModel := strings.ToLower(strings.TrimSpace(modelID))
 	if !strings.Contains(lowerModel, "opus") {
-		return body
-	}
-	if !strings.Contains(lowerModel, "4-6") && !strings.Contains(lowerModel, "4.6") {
 		return body
 	}
 
