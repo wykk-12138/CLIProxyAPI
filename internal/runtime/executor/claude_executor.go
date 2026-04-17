@@ -971,7 +971,7 @@ func applyClaudeHeaders(r *http.Request, auth *cliproxyauth.Auth, apiKey string,
 		deviceProfile = helps.ResolveClaudeDeviceProfile(auth, apiKey, ginHeaders, cfg)
 	}
 
-	baseBetas := "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,context-management-2025-06-27,prompt-caching-scope-2026-01-05,advisor-tool-2026-03-01,advanced-tool-use-2025-11-20,effort-2025-11-24"
+	baseBetas := "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,redact-thinking-2026-02-12,context-management-2025-06-27,prompt-caching-scope-2026-01-05,advisor-tool-2026-03-01,effort-2025-11-24"
 	// For ALL OAuth clients (OpenCode, OpenClaw, etc.), ignore the client's Anthropic-Beta
 	// header and use the full Claude Code default beta set. Client betas are an incomplete
 	// subset that acts as a strong third-party fingerprint for Anthropic's detection.
@@ -1589,13 +1589,13 @@ func getClientUserAgent(ctx context.Context) string {
 // parseEntrypointFromUA extracts the entrypoint from a Claude Code User-Agent.
 // Format: "claude-cli/x.y.z (external, sdk-cli)" → "sdk-cli"
 // Format: "claude-cli/x.y.z (external, vscode)"  → "vscode"
-// Returns "sdk-cli" if parsing fails or UA is not Claude Code, matching the
-// default entrypoint used by real Claude Code 2.1.112+.
+// Returns "cli" if parsing fails or UA is not Claude Code, matching the
+// default entrypoint used by real Claude Code 2.1.112+ interactive mode.
 func parseEntrypointFromUA(userAgent string) string {
 	start := strings.Index(userAgent, "(")
 	end := strings.LastIndex(userAgent, ")")
 	if start < 0 || end <= start {
-		return "sdk-cli"
+		return "cli"
 	}
 	inner := userAgent[start+1 : end]
 	parts := strings.Split(inner, ",")
@@ -1605,7 +1605,7 @@ func parseEntrypointFromUA(userAgent string) string {
 			return ep
 		}
 	}
-	return "sdk-cli"
+	return "cli"
 }
 
 // getWorkloadFromContext extracts workload identifier from the gin request headers.
@@ -1693,7 +1693,7 @@ func computeFingerprint(messageText, version string) string {
 // Format: x-anthropic-billing-header: cc_version=<ver>.<build>; cc_entrypoint=<ep>; cch=<hash>; [cc_workload=<wl>;]
 func generateBillingHeader(payload []byte, experimentalCCHSigning bool, version, messageText, entrypoint, workload string) string {
 	if entrypoint == "" {
-		entrypoint = "sdk-cli"
+		entrypoint = "cli"
 	}
 	buildHash := computeFingerprint(messageText, version)
 	workloadPart := ""
