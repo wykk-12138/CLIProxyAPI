@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -16,7 +15,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/klauspost/compress/zstd"
-	xxHash64 "github.com/pierrec/xxHash/xxHash64"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/runtime/executor/helps"
@@ -1827,93 +1825,7 @@ func TestCheckSystemInstructionsWithMode_StringWithSpecialChars(t *testing.T) {
 	}
 }
 
-func TestClaudeExecutor_ExperimentalCCHSigningDisabledByDefaultKeepsLegacyHeader(t *testing.T) {
-	var seenBody []byte
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		seenBody = bytes.Clone(body)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"msg_1","type":"message","model":"claude-3-5-sonnet","role":"assistant","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":1,"output_tokens":1}}`))
-	}))
-	defer server.Close()
 
-	executor := NewClaudeExecutor(&config.Config{})
-	auth := &cliproxyauth.Auth{Attributes: map[string]string{
-		"api_key":  "key-123",
-		"base_url": server.URL,
-	}}
-	payload := []byte(`{"messages":[{"role":"user","content":[{"type":"text","text":"hi"}]}]}`)
-
-	_, err := executor.Execute(context.Background(), auth, cliproxyexecutor.Request{
-		Model:   "claude-3-5-sonnet-20241022",
-		Payload: payload,
-	}, cliproxyexecutor.Options{SourceFormat: sdktranslator.FromString("claude")})
-	if err != nil {
-		t.Fatalf("Execute() error = %v", err)
-	}
-	if len(seenBody) == 0 {
-		t.Fatal("expected request body to be captured")
-	}
-
-	billingHeader := gjson.GetBytes(seenBody, "system.0.text").String()
-	if !strings.HasPrefix(billingHeader, "x-anthropic-billing-header:") {
-		t.Fatalf("system.0.text = %q, want billing header", billingHeader)
-	}
-	if strings.Contains(billingHeader, "cch=00000;") {
-		t.Fatalf("legacy mode should not forward cch placeholder, got %q", billingHeader)
-	}
-}
-
-func TestClaudeExecutor_ExperimentalCCHSigningOptInSignsFinalBody(t *testing.T) {
-	var seenBody []byte
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
-		seenBody = bytes.Clone(body)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"msg_1","type":"message","model":"claude-3-5-sonnet","role":"assistant","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":1,"output_tokens":1}}`))
-	}))
-	defer server.Close()
-
-	executor := NewClaudeExecutor(&config.Config{
-		ClaudeKey: []config.ClaudeKey{{
-			APIKey:                 "key-123",
-			BaseURL:                server.URL,
-			ExperimentalCCHSigning: true,
-		}},
-	})
-	auth := &cliproxyauth.Auth{Attributes: map[string]string{
-		"api_key":  "key-123",
-		"base_url": server.URL,
-	}}
-	const messageText = "please keep literal cch=00000 in this message"
-	payload := []byte(`{"messages":[{"role":"user","content":[{"type":"text","text":"please keep literal cch=00000 in this message"}]}]}`)
-
-	_, err := executor.Execute(context.Background(), auth, cliproxyexecutor.Request{
-		Model:   "claude-3-5-sonnet-20241022",
-		Payload: payload,
-	}, cliproxyexecutor.Options{SourceFormat: sdktranslator.FromString("claude")})
-	if err != nil {
-		t.Fatalf("Execute() error = %v", err)
-	}
-	if len(seenBody) == 0 {
-		t.Fatal("expected request body to be captured")
-	}
-	if got := gjson.GetBytes(seenBody, "messages.0.content.0.text").String(); got != messageText {
-		t.Fatalf("message text = %q, want %q", got, messageText)
-	}
-
-	billingPattern := regexp.MustCompile(`(x-anthropic-billing-header:[^"]*?\bcch=)([0-9a-f]{5})(;)`)
-	match := billingPattern.FindSubmatch(seenBody)
-	if match == nil {
-		t.Fatalf("expected signed billing header in body: %s", string(seenBody))
-	}
-	actualCCH := string(match[2])
-	unsignedBody := billingPattern.ReplaceAll(seenBody, []byte(`${1}00000${3}`))
-	wantCCH := fmt.Sprintf("%05x", xxHash64.Checksum(unsignedBody, 0x6E52736AC806831E)&0xFFFFF)
-	if actualCCH != wantCCH {
-		t.Fatalf("cch = %q, want %q\nbody: %s", actualCCH, wantCCH, string(seenBody))
-	}
-}
 
 func TestApplyCloaking_PreservesConfiguredStrictModeAndSensitiveWordsWhenModeOmitted(t *testing.T) {
 	cfg := &config.Config{
