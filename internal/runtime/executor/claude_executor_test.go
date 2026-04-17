@@ -1477,9 +1477,9 @@ func TestClaudeExecutor_ExecuteStream_SetsIdentityAcceptEncoding(t *testing.T) {
 		}
 	}
 
-	// Real Claude Code 2.1.110 uses application/json + compressed encoding even for streams.
-	if gotEncoding != "br, gzip, deflate" {
-		t.Errorf("Accept-Encoding = %q, want %q", gotEncoding, "br, gzip, deflate")
+	// Real Claude Code 2.1.112 interactive uses application/json + gzip, deflate (no brotli).
+	if gotEncoding != "gzip, deflate" {
+		t.Errorf("Accept-Encoding = %q, want %q", gotEncoding, "gzip, deflate")
 	}
 	if gotAccept != "application/json" {
 		t.Errorf("Accept = %q, want %q", gotAccept, "application/json")
@@ -1516,9 +1516,9 @@ func TestClaudeExecutor_Execute_SetsCompressedAcceptEncoding(t *testing.T) {
 		t.Fatalf("Execute error: %v", err)
 	}
 
-	// Real Claude Code 2.1.110 always uses "br, gzip, deflate" for all requests.
-	if gotEncoding != "br, gzip, deflate" {
-		t.Errorf("Accept-Encoding = %q, want %q", gotEncoding, "br, gzip, deflate")
+	// Real Claude Code 2.1.112 interactive sends gzip, deflate (no brotli).
+	if gotEncoding != "gzip, deflate" {
+		t.Errorf("Accept-Encoding = %q, want %q", gotEncoding, "gzip, deflate")
 	}
 	if gotAccept != "application/json" {
 		t.Errorf("Accept = %q, want %q", gotAccept, "application/json")
