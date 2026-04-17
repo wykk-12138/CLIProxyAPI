@@ -1715,14 +1715,13 @@ func checkSystemInstructionsWithMode(payload []byte, strictMode bool) []byte {
 	return checkSystemInstructionsWithSigningMode(payload, strictMode, false, false, "2.1.112", "", "")
 }
 
-// checkSystemInstructionsWithSigningMode injects Claude Code-style system blocks:
+// checkSystemInstructionsWithSigningMode injects Claude Code interactive-style system blocks:
 //
 //	system[0]: billing header (no cache_control)
-//	system[1]: agent identifier (cache_control ephemeral, scope=org)
-//	system[2]: core intro prompt (cache_control ephemeral, scope=global)
-//	system[3]: system instructions (no cache_control)
-//	system[4]: doing tasks (no cache_control)
-//	system[5]: user system messages moved to first user message
+//	system[1]: identity block (cache_control ephemeral, ttl=1h)
+//	system[2]: long interactive prompt block (cache_control ephemeral, ttl=1h)
+//
+// Any incoming user/system instructions are moved to the first user message in non-strict mode.
 func checkSystemInstructionsWithSigningMode(payload []byte, strictMode bool, experimentalCCHSigning bool, oauthMode bool, version, entrypoint, workload string) []byte {
 	system := gjson.GetBytes(payload, "system")
 
@@ -1750,34 +1749,22 @@ func checkSystemInstructionsWithSigningMode(payload []byte, strictMode bool, exp
 	billingText := generateBillingHeader(payload, experimentalCCHSigning, version, messageText, entrypoint, workload)
 	billingBlock := buildTextBlock(billingText, nil)
 
-	// Build system blocks matching real Claude Code structure.
-	// Claude Code sends each section as a SEPARATE system[] entry (not concatenated).
-	// This matches the exact block structure that Claude Code's getSystemPrompt() returns.
-	agentBlock := buildTextBlock("You are a Claude agent, built on Anthropic's Claude Agent SDK.", nil)
+	// Build system blocks matching Claude Code interactive-mode shape.
+	identityBlock := buildTextBlock(
+		"You are Claude Code, Anthropic's official CLI for Claude.",
+		map[string]string{"ttl": "1h"},
+	)
 	usingToolsSection := helps.BuildUsingToolsSection(helps.ResolveTaskToolName(payload))
+	longIntroText := helps.ClaudeCodeIntro +
+		helps.ClaudeCodeSystem +
+		helps.ClaudeCodeDoingTasks +
+		helps.ClaudeCodeActions +
+		usingToolsSection +
+		helps.ClaudeCodeToneAndStyle +
+		helps.ClaudeCodeTextOutput
+	longIntroBlock := buildTextBlock(longIntroText, map[string]string{"ttl": "1h"})
 
-	// Each section is a separate text block, matching Claude Code's array structure:
-	// system[0]: billing header (no cache_control)
-	// system[1]: agent identifier (no cache_control)
-	// system[2]: intro (ClaudeCodeIntro)
-	// system[3]: system instructions (ClaudeCodeSystem)
-	// system[4]: doing tasks (ClaudeCodeDoingTasks)
-	// system[5]: actions (ClaudeCodeActions)
-	// system[6]: using tools (dynamic)
-	// system[7]: tone and style (ClaudeCodeToneAndStyle)
-	// system[8]: output efficiency (ClaudeCodeOutputEfficiency)
-	introBlock := buildTextBlock(helps.ClaudeCodeIntro, map[string]string{"ttl": "1h", "scope": "global"})
-	systemBlock := buildTextBlock(helps.ClaudeCodeSystem, nil)
-	doingTasksBlock := buildTextBlock(helps.ClaudeCodeDoingTasks, nil)
-	actionsBlock := buildTextBlock(helps.ClaudeCodeActions, nil)
-	usingToolsBlock := buildTextBlock(usingToolsSection, nil)
-	toneAndStyleBlock := buildTextBlock(helps.ClaudeCodeToneAndStyle, nil)
-	outputEfficiencyBlock := buildTextBlock(helps.ClaudeCodeOutputEfficiency, nil)
-
-	systemResult := "[" + billingBlock + "," + agentBlock + "," +
-		introBlock + "," + systemBlock + "," + doingTasksBlock + "," +
-		actionsBlock + "," + usingToolsBlock + "," + toneAndStyleBlock + "," +
-		outputEfficiencyBlock + "]"
+	systemResult := "[" + billingBlock + "," + identityBlock + "," + longIntroBlock + "]"
 	payload, _ = sjson.SetRawBytes(payload, "system", []byte(systemResult))
 
 	// Collect user system instructions and prepend to first user message
