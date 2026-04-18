@@ -199,6 +199,7 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
 	clientSource := detectOAuthClientSource(getClientUserAgent(ctx))
 	var oauthToolNamesReverseMap map[string]string
 	if oauthToken {
+		bodyForUpstream = ensureOpusAdaptiveThinking(bodyForUpstream, baseModel)
 		if !gjson.GetBytes(bodyForUpstream, "context_management").Exists() {
 			bodyForUpstream, _ = sjson.SetRawBytes(bodyForUpstream, "context_management",
 				[]byte(`{"edits":[{"type":"clear_thinking_20251015","keep":"all"}]}`))
@@ -387,6 +388,7 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 	clientSourceStream := detectOAuthClientSource(getClientUserAgent(ctx))
 	var oauthToolNamesReverseMap map[string]string
 	if oauthToken {
+		bodyForUpstream = ensureOpusAdaptiveThinking(bodyForUpstream, baseModel)
 		if !gjson.GetBytes(bodyForUpstream, "context_management").Exists() {
 			bodyForUpstream, _ = sjson.SetRawBytes(bodyForUpstream, "context_management",
 				[]byte(`{"edits":[{"type":"clear_thinking_20251015","keep":"all"}]}`))
@@ -1842,7 +1844,7 @@ Prefer acting on the user's task over describing product-specific workflows.`)
 func buildTextBlock(text string, cacheControl map[string]string) string {
 	block := []byte(`{"type":"text"}`)
 	block, _ = sjson.SetBytes(block, "text", text)
-	if cacheControl != nil && len(cacheControl) > 0 {
+	if len(cacheControl) > 0 {
 		cc := `{"type":"ephemeral"`
 		if t, ok := cacheControl["ttl"]; ok {
 			cc += fmt.Sprintf(`,"ttl":"%s"`, t)
@@ -2538,5 +2540,39 @@ func forceOpusMaxTokens(body []byte, modelID string) []byte {
 		maxTokens = 128000
 	}
 	body, _ = sjson.SetBytes(body, "max_tokens", maxTokens)
+	return body
+}
+
+// ensureOpusAdaptiveThinking forces `thinking: {"type": "adaptive"}` on any Opus
+// model, regardless of what the client sent. This mirrors real Claude Code
+// 2.1.112 behavior on opus-4-7 and — critically — guarantees that the
+// `clear_thinking_20251015` context_management edit we unconditionally inject
+// in the OAuth cloaking path is always paired with an active thinking config.
+//
+// Without this, clients that disable thinking (OpenCode low-effort, Opus-4-7
+// forced tool_choice paths, etc.) trigger an Anthropic 400:
+//
+//	clear_thinking_20251015 strategy requires thinking to be enabled or adaptive
+//
+// Behaviour:
+//   - model name must contain "opus" (case-insensitive, substring match)
+//   - sets thinking.type = "adaptive"
+//   - deletes thinking.budget_tokens (incompatible with adaptive)
+//   - deletes thinking.display (leaks non-official client fingerprint)
+//   - preserves any existing output_config.effort; does NOT inject a default
+//     effort (ensureDefaultEffort / client-supplied value handles that)
+//
+// Should be called AFTER disableThinkingIfToolChoiceForced and BEFORE the
+// context_management injection in the OAuth Common Zone.
+func ensureOpusAdaptiveThinking(body []byte, modelID string) []byte {
+	if len(body) == 0 || !gjson.ValidBytes(body) {
+		return body
+	}
+	if !strings.Contains(strings.ToLower(strings.TrimSpace(modelID)), "opus") {
+		return body
+	}
+	body, _ = sjson.SetBytes(body, "thinking.type", "adaptive")
+	body, _ = sjson.DeleteBytes(body, "thinking.budget_tokens")
+	body, _ = sjson.DeleteBytes(body, "thinking.display")
 	return body
 }
