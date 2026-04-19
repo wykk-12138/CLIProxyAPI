@@ -1062,12 +1062,10 @@ func applyClaudeHeaders(r *http.Request, auth *cliproxyauth.Auth, apiKey string,
 		misc.EnsureHeader(r.Header, ginHeaders, "x-client-request-id", uuid.New().String())
 	}
 	r.Header.Set("Connection", "keep-alive")
-	// Real Claude Code 2.1.112 interactive sends application/json + gzip, deflate
-	// (no brotli). Streaming also uses encoded body, not Accept header.
+	// Real Claude Code 2.1.114 interactive sends application/json +
+	// gzip, deflate, br, zstd. Streaming also uses encoded body, not Accept header.
 	r.Header.Set("Accept", "application/json")
-	r.Header.Set("Accept-Encoding", "gzip, deflate")
-	r.Header.Set("accept-language", "*")
-	r.Header.Set("sec-fetch-mode", "cors")
+	r.Header.Set("Accept-Encoding", "gzip, deflate, br, zstd")
 	r.Header.Set("Anthropic-Dangerous-Direct-Browser-Access", "true")
 	// Legacy mode keeps OS/Arch runtime-derived; stabilized mode pins OS/Arch
 	// to the configured baseline while still allowing newer official
@@ -1108,7 +1106,7 @@ func claudeCreds(a *cliproxyauth.Auth) (apiKey, baseURL string) {
 }
 
 func checkSystemInstructions(payload []byte) []byte {
-	return checkSystemInstructionsWithSigningMode(payload, false, false, false, "2.1.112", "", "")
+	return checkSystemInstructionsWithSigningMode(payload, false, false, false, helps.DefaultClaudeVersion(nil), "", "")
 }
 
 func isClaudeOAuthToken(apiKey string) bool {
@@ -1729,7 +1727,7 @@ func generateBillingHeader(payload []byte, experimentalCCHSigning bool, version,
 	}
 
 	if experimentalCCHSigning {
-		return fmt.Sprintf("x-anthropic-billing-header: cc_version=%s.%s; cc_entrypoint=%s; cch=00000;%s", version, buildHash, entrypoint, workloadPart)
+		return fmt.Sprintf("x-anthropic-billing-header: cc_version=%s.%s; cc_entrypoint=%s; cch=%s;%s", version, buildHash, entrypoint, claudeBillingCCHPlaceholder, workloadPart)
 	}
 
 	// Generate a deterministic cch hash from the payload content (system + messages + tools).
@@ -1739,7 +1737,7 @@ func generateBillingHeader(payload []byte, experimentalCCHSigning bool, version,
 }
 
 func checkSystemInstructionsWithMode(payload []byte, strictMode bool) []byte {
-	return checkSystemInstructionsWithSigningMode(payload, strictMode, false, false, "2.1.112", "", "")
+	return checkSystemInstructionsWithSigningMode(payload, strictMode, false, false, helps.DefaultClaudeVersion(nil), "", "")
 }
 
 // checkSystemInstructionsWithSigningMode injects Claude Code interactive-style system blocks:
