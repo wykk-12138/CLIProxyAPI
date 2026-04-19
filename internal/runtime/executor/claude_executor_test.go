@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -1368,9 +1370,9 @@ func TestClaudeExecutor_ExecuteStream_SetsIdentityAcceptEncoding(t *testing.T) {
 		}
 	}
 
-	// Real Claude Code 2.1.112 interactive uses application/json + gzip, deflate (no brotli).
-	if gotEncoding != "gzip, deflate" {
-		t.Errorf("Accept-Encoding = %q, want %q", gotEncoding, "gzip, deflate")
+	// Real Claude Code 2.1.114 interactive uses application/json + gzip, deflate, br, zstd.
+	if gotEncoding != "gzip, deflate, br, zstd" {
+		t.Errorf("Accept-Encoding = %q, want %q", gotEncoding, "gzip, deflate, br, zstd")
 	}
 	if gotAccept != "application/json" {
 		t.Errorf("Accept = %q, want %q", gotAccept, "application/json")
@@ -1407,9 +1409,9 @@ func TestClaudeExecutor_Execute_SetsCompressedAcceptEncoding(t *testing.T) {
 		t.Fatalf("Execute error: %v", err)
 	}
 
-	// Real Claude Code 2.1.112 interactive sends gzip, deflate (no brotli).
-	if gotEncoding != "gzip, deflate" {
-		t.Errorf("Accept-Encoding = %q, want %q", gotEncoding, "gzip, deflate")
+	// Real Claude Code 2.1.114 interactive sends gzip, deflate, br, zstd.
+	if gotEncoding != "gzip, deflate, br, zstd" {
+		t.Errorf("Accept-Encoding = %q, want %q", gotEncoding, "gzip, deflate, br, zstd")
 	}
 	if gotAccept != "application/json" {
 		t.Errorf("Accept = %q, want %q", gotAccept, "application/json")
@@ -1709,9 +1711,99 @@ func TestClaudeExecutor_ExecuteStream_AcceptEncodingOverrideCannotBypassIdentity
 		}
 	}
 
-	// Real Claude Code 2.1.110 uses compressed encoding; custom header override should apply.
+	// Real Claude Code 2.1.114 uses compressed encoding; custom header override should apply.
 	if gotEncoding != "gzip, deflate, br, zstd" {
 		t.Errorf("Accept-Encoding = %q; custom header override should be applied", gotEncoding)
+	}
+}
+
+func TestApplyClaudeHeaders_OmitsAcceptLanguageAndSecFetchMode(t *testing.T) {
+	req := newClaudeHeaderTestRequest(t, http.Header{})
+	applyClaudeHeaders(req, &cliproxyauth.Auth{Attributes: map[string]string{"api_key": "key-header-omit"}}, "key-header-omit", false, nil, &config.Config{})
+
+	if got := req.Header.Get("accept-language"); got != "" {
+		t.Fatalf("accept-language = %q, want empty", got)
+	}
+	if got := req.Header.Get("sec-fetch-mode"); got != "" {
+		t.Fatalf("sec-fetch-mode = %q, want empty", got)
+	}
+}
+
+func TestDefaultClaudeVersion_UsesCanonicalDeviceProfileDefault(t *testing.T) {
+	if got := helps.DefaultClaudeVersion(nil); got != "2.1.114" {
+		t.Fatalf("DefaultClaudeVersion(nil) = %q, want %q", got, "2.1.114")
+	}
+}
+
+func TestCheckSystemInstructions_DefaultBillingVersionComesFromCanonicalProfile(t *testing.T) {
+	payload := []byte(`{"messages":[{"role":"user","content":"hi"}]}`)
+	out := checkSystemInstructions(payload)
+	billing := gjson.GetBytes(out, "system.0.text").String()
+	if !strings.Contains(billing, "cc_version=2.1.114.") {
+		t.Fatalf("billing header should contain cc_version=2.1.114.*, got %q", billing)
+	}
+}
+
+func TestClaudeExecutor_Execute_OAuthSignsFinalBodyAfterEffortMutation(t *testing.T) {
+	var gotBody []byte
+	var readErr error
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBody, readErr = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_1","type":"message","model":"claude-opus-4-7","role":"assistant","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":1,"output_tokens":1}}`))
+	}))
+	defer server.Close()
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ginCtx, _ := gin.CreateTestContext(recorder)
+	ginReq := httptest.NewRequest(http.MethodPost, "http://localhost/v1/messages", nil)
+	ginReq.Header.Set("User-Agent", "Anthropic/JS 0.0.0")
+	ginCtx.Request = ginReq
+	ctx := context.WithValue(context.Background(), "gin", ginCtx)
+
+	executor := NewClaudeExecutor(&config.Config{})
+	auth := &cliproxyauth.Auth{Attributes: map[string]string{
+		"api_key":  "sk-ant-oat01-test-oauth",
+		"base_url": server.URL,
+	}}
+	payload := []byte(`{"model":"claude-opus-4-7","thinking":{"type":"adaptive"},"messages":[{"role":"user","content":"hi"}]}`)
+
+	_, err := executor.Execute(ctx, auth, cliproxyexecutor.Request{
+		Model:   "claude-opus-4-7",
+		Payload: payload,
+	}, cliproxyexecutor.Options{
+		SourceFormat: sdktranslator.FromString("claude"),
+	})
+	if err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+	if readErr != nil {
+		t.Fatalf("failed reading upstream request body: %v", readErr)
+	}
+
+	if got := gjson.GetBytes(gotBody, "output_config.effort").String(); got != "medium" {
+		t.Fatalf("output_config.effort = %q, want %q", got, "medium")
+	}
+
+	billing := gjson.GetBytes(gotBody, "system.0.text").String()
+	cchPrefix := "cch="
+	start := strings.Index(billing, cchPrefix)
+	if start < 0 {
+		t.Fatalf("billing header missing cch field: %q", billing)
+	}
+	start += len(cchPrefix)
+	endRel := strings.Index(billing[start:], ";")
+	if endRel < 0 {
+		t.Fatalf("billing header cch field malformed: %q", billing)
+	}
+	actualCCH := billing[start : start+endRel]
+
+	placeholderBody := bytes.Replace(gotBody, []byte("cch="+actualCCH+";"), []byte("cch="+claudeBillingCCHPlaceholder+";"), 1)
+	h := sha256.Sum256(placeholderBody)
+	wantCCH := hex.EncodeToString(h[:])[:5]
+	if actualCCH != wantCCH {
+		t.Fatalf("cch = %q, want %q (hash from final serialized body with placeholder)", actualCCH, wantCCH)
 	}
 }
 
@@ -1824,8 +1916,6 @@ func TestCheckSystemInstructionsWithMode_StringWithSpecialChars(t *testing.T) {
 		t.Fatalf("forwarded system prompt text mangled, got %q", got)
 	}
 }
-
-
 
 func TestApplyCloaking_PreservesConfiguredStrictModeAndSensitiveWordsWhenModeOmitted(t *testing.T) {
 	cfg := &config.Config{

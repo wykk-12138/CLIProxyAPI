@@ -1,14 +1,26 @@
 package executor
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"strings"
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 )
 
+const claudeBillingCCHPlaceholder = "00000"
+
 func signAnthropicMessagesBody(body []byte) []byte {
-	return body
+	placeholder := []byte("cch=" + claudeBillingCCHPlaceholder + ";")
+	if !bytes.Contains(body, placeholder) {
+		return body
+	}
+
+	h := sha256.Sum256(body)
+	cch := hex.EncodeToString(h[:])[:5]
+	return bytes.Replace(body, placeholder, []byte("cch="+cch+";"), 1)
 }
 
 func resolveClaudeKeyConfig(cfg *config.Config, auth *cliproxyauth.Auth) *config.ClaudeKey {
