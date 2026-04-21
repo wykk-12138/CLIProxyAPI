@@ -22,7 +22,7 @@ func TestEnsureClaudeAdaptiveThinking_OverridesDisabled(t *testing.T) {
 	}
 }
 
-func TestEnsureClaudeAdaptiveThinking_DropsBudgetTokensAndDisplay(t *testing.T) {
+func TestEnsureClaudeAdaptiveThinking_DropsBudgetTokensAndPreservesDisplay(t *testing.T) {
 	in := []byte(`{"thinking":{"type":"enabled","budget_tokens":16000,"display":"summarized"},"messages":[{"role":"user","content":"hi"}]}`)
 	out := ensureClaudeAdaptiveThinking(in, "claude-opus-4-7")
 	if got := gjson.GetBytes(out, "thinking.type").String(); got != "adaptive" {
@@ -31,8 +31,8 @@ func TestEnsureClaudeAdaptiveThinking_DropsBudgetTokensAndDisplay(t *testing.T) 
 	if gjson.GetBytes(out, "thinking.budget_tokens").Exists() {
 		t.Error("thinking.budget_tokens must be deleted (incompatible with adaptive)")
 	}
-	if gjson.GetBytes(out, "thinking.display").Exists() {
-		t.Error("thinking.display must be deleted (non-official fingerprint)")
+	if got := gjson.GetBytes(out, "thinking.display").String(); got != "summarized" {
+		t.Errorf("thinking.display = %q, want %q (client-requested display must be preserved)", got, "summarized")
 	}
 }
 
