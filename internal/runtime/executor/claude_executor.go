@@ -206,10 +206,12 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
 		if !auth.ToolPrefixDisabled() {
 			bodyForUpstream = applyClaudeToolPrefix(body, claudeToolPrefix)
 		}
-		// Inject context_management (matches real Claude Code 2.1.112)
-		// Ensure adaptive thinking on any Opus model so the clear_thinking_20251015
-		// edit below always has a valid companion. See ensureOpusAdaptiveThinking.
-		bodyForUpstream = ensureOpusAdaptiveThinking(bodyForUpstream, baseModel)
+		// Inject context_management (matches real Claude Code 2.1.112).
+		// Force adaptive thinking for every OAuth-routed Claude model so the
+		// clear_thinking_20251015 edit below always has a valid companion
+		// (Sonnet and Haiku hit the same 400 that Opus did when thinking is
+		// missing or disabled). See ensureClaudeAdaptiveThinking.
+		bodyForUpstream = ensureClaudeAdaptiveThinking(bodyForUpstream, baseModel)
 		if !gjson.GetBytes(bodyForUpstream, "context_management").Exists() {
 			bodyForUpstream, _ = sjson.SetRawBytes(bodyForUpstream, "context_management",
 				[]byte(`{"edits":[{"type":"clear_thinking_20251015","keep":"all"}]}`))
@@ -415,9 +417,10 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 		if !auth.ToolPrefixDisabled() {
 			bodyForUpstream = applyClaudeToolPrefix(body, claudeToolPrefix)
 		}
-		// Ensure adaptive thinking on any Opus model so the clear_thinking_20251015
-		// edit below always has a valid companion. See ensureOpusAdaptiveThinking.
-		bodyForUpstream = ensureOpusAdaptiveThinking(bodyForUpstream, baseModel)
+		// Force adaptive thinking for every OAuth-routed Claude model so the
+		// clear_thinking_20251015 edit below always has a valid companion.
+		// See ensureClaudeAdaptiveThinking.
+		bodyForUpstream = ensureClaudeAdaptiveThinking(bodyForUpstream, baseModel)
 		if !gjson.GetBytes(bodyForUpstream, "context_management").Exists() {
 			bodyForUpstream, _ = sjson.SetRawBytes(bodyForUpstream, "context_management",
 				[]byte(`{"edits":[{"type":"clear_thinking_20251015","keep":"all"}]}`))
@@ -2527,32 +2530,28 @@ func forceOpusMaxTokens(body []byte, modelID string) []byte {
 	return body
 }
 
-// ensureOpusAdaptiveThinking forces `thinking: {"type": "adaptive"}` on any Opus
-// model, regardless of what the client sent. This mirrors real Claude Code
-// 2.1.112 behavior on opus-4-7 and — critically — guarantees that the
-// `clear_thinking_20251015` context_management edit we unconditionally inject
-// in the OAuth cloaking path is always paired with an active thinking config.
-//
-// Without this, clients that disable thinking (OpenCode low-effort, Opus-4-7
-// forced tool_choice paths, etc.) trigger an Anthropic 400:
+// ensureClaudeAdaptiveThinking forces `thinking: {"type": "adaptive"}` on every
+// Claude model routed through the OAuth path, regardless of what the client
+// sent. This guarantees that the `clear_thinking_20251015` context_management
+// edit we unconditionally inject in the OAuth cloaking path always has a valid
+// companion. Sonnet and Haiku users hit the same 400 that Opus did when thinking
+// is absent or disabled:
 //
 //	clear_thinking_20251015 strategy requires thinking to be enabled or adaptive
 //
 // Behaviour:
-//   - model name must contain "opus" (case-insensitive, substring match)
 //   - sets thinking.type = "adaptive"
 //   - deletes thinking.budget_tokens (incompatible with adaptive)
 //   - deletes thinking.display (leaks non-official client fingerprint)
 //   - preserves any existing output_config.effort; does NOT inject a default
 //     effort (ensureDefaultEffort / client-supplied value handles that)
 //
-// Should be called AFTER disableThinkingIfToolChoiceForced and BEFORE the
-// context_management injection in the OAuth Common Zone.
-func ensureOpusAdaptiveThinking(body []byte, modelID string) []byte {
+// Should be called BEFORE the context_management injection in the OAuth
+// Common Zone. The modelID argument is accepted for future per-model gating
+// but is currently unused because every OAuth-routed model needs adaptive.
+func ensureClaudeAdaptiveThinking(body []byte, modelID string) []byte {
+	_ = modelID
 	if len(body) == 0 || !gjson.ValidBytes(body) {
-		return body
-	}
-	if !strings.Contains(strings.ToLower(strings.TrimSpace(modelID)), "opus") {
 		return body
 	}
 	body, _ = sjson.SetBytes(body, "thinking.type", "adaptive")
