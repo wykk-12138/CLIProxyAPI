@@ -216,8 +216,6 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
 			bodyForUpstream, _ = sjson.SetRawBytes(bodyForUpstream, "context_management",
 				[]byte(`{"edits":[{"type":"clear_thinking_20251015","keep":"all"}]}`))
 		}
-		// Strip non-official thinking.display (OpenCode etc. leak it; real CC does not send it)
-		bodyForUpstream = stripThinkingDisplay(bodyForUpstream)
 		// Remap tool names and strip unmapped tools
 		bodyForUpstream, oauthToolNamesRemapped = remapOAuthToolNamesEx(bodyForUpstream, true)
 	}
@@ -425,7 +423,6 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 			bodyForUpstream, _ = sjson.SetRawBytes(bodyForUpstream, "context_management",
 				[]byte(`{"edits":[{"type":"clear_thinking_20251015","keep":"all"}]}`))
 		}
-		bodyForUpstream = stripThinkingDisplay(bodyForUpstream)
 		bodyForUpstream, oauthToolNamesRemapped = remapOAuthToolNamesEx(bodyForUpstream, true)
 	}
 
@@ -788,21 +785,6 @@ func disableThinkingIfToolChoiceForced(body []byte) []byte {
 			body, _ = sjson.DeleteBytes(body, "output_config")
 		}
 	}
-	return body
-}
-
-// stripThinkingDisplay removes the non-official `thinking.display` field
-// (e.g. "summarized") that some harnesses such as OpenCode inject. Real
-// Claude Code 2.1.112+ sends only `{"type":"adaptive"}` without `display`,
-// so leaving the field in place produces a third-party fingerprint.
-func stripThinkingDisplay(body []byte) []byte {
-	if len(body) == 0 || !gjson.ValidBytes(body) {
-		return body
-	}
-	if !gjson.GetBytes(body, "thinking.display").Exists() {
-		return body
-	}
-	body, _ = sjson.DeleteBytes(body, "thinking.display")
 	return body
 }
 
@@ -2542,7 +2524,9 @@ func forceOpusMaxTokens(body []byte, modelID string) []byte {
 // Behaviour:
 //   - sets thinking.type = "adaptive"
 //   - deletes thinking.budget_tokens (incompatible with adaptive)
-//   - deletes thinking.display (leaks non-official client fingerprint)
+//   - preserves thinking.display verbatim so clients that request
+//     `"display":"summarized"` (e.g. OpenCode) still receive visible
+//     reasoning deltas instead of redacted-only signatures
 //   - preserves any existing output_config.effort; does NOT inject a default
 //     effort (ensureDefaultEffort / client-supplied value handles that)
 //
@@ -2556,6 +2540,5 @@ func ensureClaudeAdaptiveThinking(body []byte, modelID string) []byte {
 	}
 	body, _ = sjson.SetBytes(body, "thinking.type", "adaptive")
 	body, _ = sjson.DeleteBytes(body, "thinking.budget_tokens")
-	body, _ = sjson.DeleteBytes(body, "thinking.display")
 	return body
 }
