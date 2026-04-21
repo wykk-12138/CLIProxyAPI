@@ -1838,6 +1838,15 @@ func TestApplyClaudeHeaders_OmitsAcceptLanguageAndSecFetchMode(t *testing.T) {
 	}
 }
 
+func TestApplyClaudeHeaders_DefaultStainlessTimeoutMatches2_1_114(t *testing.T) {
+	req := newClaudeHeaderTestRequest(t, http.Header{})
+	applyClaudeHeaders(req, &cliproxyauth.Auth{Attributes: map[string]string{"api_key": "key-timeout-default"}}, "key-timeout-default", false, nil, &config.Config{})
+
+	if got := req.Header.Get("X-Stainless-Timeout"); got != "600" {
+		t.Fatalf("X-Stainless-Timeout = %q, want %q (Claude Code 2.1.114 default)", got, "600")
+	}
+}
+
 func TestDefaultClaudeVersion_UsesCanonicalDeviceProfileDefault(t *testing.T) {
 	if got := helps.DefaultClaudeVersion(nil); got != "2.1.114" {
 		t.Fatalf("DefaultClaudeVersion(nil) = %q, want %q", got, "2.1.114")
