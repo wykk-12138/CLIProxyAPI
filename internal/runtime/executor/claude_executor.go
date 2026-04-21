@@ -974,13 +974,24 @@ func applyClaudeHeaders(r *http.Request, auth *cliproxyauth.Auth, apiKey string,
 	// header and use the full Claude Code default beta set. Client betas are an incomplete
 	// subset that acts as a strong third-party fingerprint for Anthropic's detection.
 	isOAuthRequest := len(oauthClientOpts) > 0
-	_ = isOAuthRequest && oauthClientOpts[0] != oauthClientOpenCode // reserved for future use
 	if !isOAuthRequest {
 		if val := strings.TrimSpace(ginHeaders.Get("Anthropic-Beta")); val != "" {
 			baseBetas = val
 			if !strings.Contains(val, "oauth") {
 				baseBetas += ",oauth-2025-04-20"
 			}
+		}
+	} else {
+		// Non-Claude-Code OAuth clients (OpenCode etc.) cannot render encrypted
+		// thinking blocks: when `redact-thinking-2026-02-12` is advertised the
+		// server returns only `signature_delta`, hiding reasoning from the user.
+		// Real Claude Code UA keeps the beta for full fingerprint parity; other
+		// clients drop it so the server emits visible `thinking_delta` deltas.
+		incomingUA := strings.TrimSpace(ginHeaders.Get("User-Agent"))
+		if !isClaudeCodeClient(incomingUA) {
+			baseBetas = strings.ReplaceAll(baseBetas, ",redact-thinking-2026-02-12", "")
+			baseBetas = strings.ReplaceAll(baseBetas, "redact-thinking-2026-02-12,", "")
+			baseBetas = strings.TrimPrefix(baseBetas, "redact-thinking-2026-02-12")
 		}
 	}
 	if !strings.Contains(baseBetas, "interleaved-thinking") {
@@ -1075,6 +1086,10 @@ func checkSystemInstructions(payload []byte) []byte {
 
 func isClaudeOAuthToken(apiKey string) bool {
 	return strings.Contains(apiKey, "sk-ant-oat")
+}
+
+func isClaudeCodeClient(userAgent string) bool {
+	return strings.HasPrefix(strings.TrimSpace(userAgent), "claude-cli")
 }
 
 // remapOAuthToolNamesEx extends remapOAuthToolNames with an option to strip tools

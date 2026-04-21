@@ -1756,6 +1756,52 @@ func TestDefaultClaudeVersion_UsesCanonicalDeviceProfileDefault(t *testing.T) {
 	}
 }
 
+func TestApplyClaudeHeaders_OAuthDropsRedactThinkingForNonClaudeCodeUA(t *testing.T) {
+	resetClaudeDeviceProfileCache()
+	incoming := http.Header{
+		"User-Agent": []string{"opencode/1.14.19 ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.11"},
+	}
+	req := newClaudeHeaderTestRequest(t, incoming)
+	ginCtx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ginReq := httptest.NewRequest(http.MethodPost, "http://localhost/v1/messages", nil)
+	ginReq.Header = incoming
+	ginCtx.Request = ginReq
+	req = req.WithContext(context.WithValue(req.Context(), "gin", ginCtx))
+
+	applyClaudeHeaders(req, &cliproxyauth.Auth{Attributes: map[string]string{"api_key": "sk-ant-oat01-opencode"}}, "sk-ant-oat01-opencode", false, nil, &config.Config{}, oauthClientOpenCode)
+
+	beta := req.Header.Get("Anthropic-Beta")
+	if strings.Contains(beta, "redact-thinking-2026-02-12") {
+		t.Fatalf("non-Claude-Code OAuth UA should not advertise redact-thinking-2026-02-12; got beta=%q", beta)
+	}
+	if !strings.Contains(beta, "claude-code-20250219") {
+		t.Fatalf("baseline beta set should still be present; got beta=%q", beta)
+	}
+	if !strings.Contains(beta, "interleaved-thinking-2025-05-14") {
+		t.Fatalf("interleaved-thinking beta should still be present; got beta=%q", beta)
+	}
+}
+
+func TestApplyClaudeHeaders_OAuthKeepsRedactThinkingForClaudeCodeUA(t *testing.T) {
+	resetClaudeDeviceProfileCache()
+	incoming := http.Header{
+		"User-Agent": []string{"claude-cli/2.1.114 (external, cli)"},
+	}
+	req := newClaudeHeaderTestRequest(t, incoming)
+	ginCtx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ginReq := httptest.NewRequest(http.MethodPost, "http://localhost/v1/messages", nil)
+	ginReq.Header = incoming
+	ginCtx.Request = ginReq
+	req = req.WithContext(context.WithValue(req.Context(), "gin", ginCtx))
+
+	applyClaudeHeaders(req, &cliproxyauth.Auth{Attributes: map[string]string{"api_key": "sk-ant-oat01-cc"}}, "sk-ant-oat01-cc", false, nil, &config.Config{}, oauthClientOther)
+
+	beta := req.Header.Get("Anthropic-Beta")
+	if !strings.Contains(beta, "redact-thinking-2026-02-12") {
+		t.Fatalf("real Claude Code UA must keep redact-thinking-2026-02-12 for fingerprint parity; got beta=%q", beta)
+	}
+}
+
 func TestCheckSystemInstructions_DefaultBillingVersionComesFromCanonicalProfile(t *testing.T) {
 	payload := []byte(`{"messages":[{"role":"user","content":"hi"}]}`)
 	out := checkSystemInstructions(payload)
