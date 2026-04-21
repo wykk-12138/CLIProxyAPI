@@ -1738,6 +1738,18 @@ func TestApplyClaudeHeaders_DefaultStainlessTimeoutMatches2_1_114(t *testing.T) 
 	}
 }
 
+func TestApplyClaudeHeaders_DefaultStainlessRuntimeVersionMatches2_1_114(t *testing.T) {
+	resetClaudeDeviceProfileCache()
+	req := newClaudeHeaderTestRequest(t, http.Header{})
+	applyClaudeHeaders(req, &cliproxyauth.Auth{
+		Attributes: map[string]string{"api_key": "sk-ant-oat01-runtime-default"},
+	}, "sk-ant-oat01-runtime-default", false, nil, &config.Config{})
+
+	if got := req.Header.Get("X-Stainless-Runtime-Version"); got != "v24.3.0" {
+		t.Fatalf("X-Stainless-Runtime-Version = %q, want %q (Claude Code 2.1.114 default)", got, "v24.3.0")
+	}
+}
+
 func TestDefaultClaudeVersion_UsesCanonicalDeviceProfileDefault(t *testing.T) {
 	if got := helps.DefaultClaudeVersion(nil); got != "2.1.114" {
 		t.Fatalf("DefaultClaudeVersion(nil) = %q, want %q", got, "2.1.114")
