@@ -55,6 +55,9 @@ func init() {
 // service based on the provided flags (login, codex-login, or server mode).
 func main() {
 	fmt.Printf("CLIProxyAPI Version: %s, Commit: %s, BuiltAt: %s\n", buildinfo.Version, buildinfo.Commit, buildinfo.BuildDate)
+	if len(os.Args) == 2 && (os.Args[1] == "--version" || os.Args[1] == "-version" || os.Args[1] == "-v") {
+		return
+	}
 
 	// Command-line flags to control the application's behavior.
 	var login bool
