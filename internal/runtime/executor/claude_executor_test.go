@@ -1370,7 +1370,7 @@ func TestClaudeExecutor_ExecuteStream_SetsIdentityAcceptEncoding(t *testing.T) {
 		}
 	}
 
-	// Real Claude Code 2.1.114 interactive uses application/json + gzip, deflate, br, zstd.
+	// Real Claude Code 2.1.119 interactive uses application/json + gzip, deflate, br, zstd.
 	if gotEncoding != "gzip, deflate, br, zstd" {
 		t.Errorf("Accept-Encoding = %q, want %q", gotEncoding, "gzip, deflate, br, zstd")
 	}
@@ -1409,7 +1409,7 @@ func TestClaudeExecutor_Execute_SetsCompressedAcceptEncoding(t *testing.T) {
 		t.Fatalf("Execute error: %v", err)
 	}
 
-	// Real Claude Code 2.1.114 interactive sends gzip, deflate, br, zstd.
+	// Real Claude Code 2.1.119 interactive sends gzip, deflate, br, zstd.
 	if gotEncoding != "gzip, deflate, br, zstd" {
 		t.Errorf("Accept-Encoding = %q, want %q", gotEncoding, "gzip, deflate, br, zstd")
 	}
@@ -1711,7 +1711,7 @@ func TestClaudeExecutor_ExecuteStream_AcceptEncodingOverrideCannotBypassIdentity
 		}
 	}
 
-	// Real Claude Code 2.1.114 uses compressed encoding; custom header override should apply.
+	// Real Claude Code 2.1.119 uses compressed encoding; custom header override should apply.
 	if gotEncoding != "gzip, deflate, br, zstd" {
 		t.Errorf("Accept-Encoding = %q; custom header override should be applied", gotEncoding)
 	}
@@ -1734,7 +1734,7 @@ func TestApplyClaudeHeaders_DefaultStainlessTimeoutMatches2_1_114(t *testing.T) 
 	applyClaudeHeaders(req, &cliproxyauth.Auth{Attributes: map[string]string{"api_key": "key-timeout-default"}}, "key-timeout-default", false, nil, &config.Config{})
 
 	if got := req.Header.Get("X-Stainless-Timeout"); got != "600" {
-		t.Fatalf("X-Stainless-Timeout = %q, want %q (Claude Code 2.1.114 default)", got, "600")
+		t.Fatalf("X-Stainless-Timeout = %q, want %q (Claude Code 2.1.119 default)", got, "600")
 	}
 }
 
@@ -1746,13 +1746,13 @@ func TestApplyClaudeHeaders_DefaultStainlessRuntimeVersionMatches2_1_114(t *test
 	}, "sk-ant-oat01-runtime-default", false, nil, &config.Config{})
 
 	if got := req.Header.Get("X-Stainless-Runtime-Version"); got != "v24.3.0" {
-		t.Fatalf("X-Stainless-Runtime-Version = %q, want %q (Claude Code 2.1.114 default)", got, "v24.3.0")
+		t.Fatalf("X-Stainless-Runtime-Version = %q, want %q (Claude Code 2.1.119 default)", got, "v24.3.0")
 	}
 }
 
 func TestDefaultClaudeVersion_UsesCanonicalDeviceProfileDefault(t *testing.T) {
-	if got := helps.DefaultClaudeVersion(nil); got != "2.1.114" {
-		t.Fatalf("DefaultClaudeVersion(nil) = %q, want %q", got, "2.1.114")
+	if got := helps.DefaultClaudeVersion(nil); got != "2.1.119" {
+		t.Fatalf("DefaultClaudeVersion(nil) = %q, want %q", got, "2.1.119")
 	}
 }
 
@@ -1785,7 +1785,7 @@ func TestApplyClaudeHeaders_OAuthDropsRedactThinkingForNonClaudeCodeUA(t *testin
 func TestApplyClaudeHeaders_OAuthKeepsRedactThinkingForClaudeCodeUA(t *testing.T) {
 	resetClaudeDeviceProfileCache()
 	incoming := http.Header{
-		"User-Agent": []string{"claude-cli/2.1.114 (external, cli)"},
+		"User-Agent": []string{"claude-cli/2.1.119 (external, cli)"},
 	}
 	req := newClaudeHeaderTestRequest(t, incoming)
 	ginCtx, _ := gin.CreateTestContext(httptest.NewRecorder())
@@ -1794,7 +1794,7 @@ func TestApplyClaudeHeaders_OAuthKeepsRedactThinkingForClaudeCodeUA(t *testing.T
 	ginCtx.Request = ginReq
 	req = req.WithContext(context.WithValue(req.Context(), "gin", ginCtx))
 
-	applyClaudeHeaders(req, &cliproxyauth.Auth{Attributes: map[string]string{"api_key": "sk-ant-oat01-cc"}}, "sk-ant-oat01-cc", false, nil, &config.Config{}, oauthClientOther)
+	applyClaudeHeaders(req, &cliproxyauth.Auth{Attributes: map[string]string{"api_key": "sk-ant-oat01-cc"}}, "sk-ant-oat01-cc", false, nil, &config.Config{}, oauthClientClaudeCode)
 
 	beta := req.Header.Get("Anthropic-Beta")
 	if !strings.Contains(beta, "redact-thinking-2026-02-12") {
@@ -1806,8 +1806,8 @@ func TestCheckSystemInstructions_DefaultBillingVersionComesFromCanonicalProfile(
 	payload := []byte(`{"messages":[{"role":"user","content":"hi"}]}`)
 	out := checkSystemInstructions(payload)
 	billing := gjson.GetBytes(out, "system.0.text").String()
-	if !strings.Contains(billing, "cc_version=2.1.114.") {
-		t.Fatalf("billing header should contain cc_version=2.1.114.*, got %q", billing)
+	if !strings.Contains(billing, "cc_version=2.1.119.") {
+		t.Fatalf("billing header should contain cc_version=2.1.119.*, got %q", billing)
 	}
 }
 
@@ -2090,5 +2090,151 @@ func TestRemapOAuthToolNames_Lowercase_ReverseApplied(t *testing.T) {
 	}
 	if got := gjson.GetBytes(reversed, "content.0.name").String(); got != "bash" {
 		t.Fatalf("content.0.name = %q, want %q", got, "bash")
+	}
+}
+
+func newClaudeExecutorTestContext(headers http.Header) context.Context {
+	gin.SetMode(gin.TestMode)
+	ginCtx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ginReq := httptest.NewRequest(http.MethodPost, "http://localhost/v1/messages", nil)
+	ginReq.Header = headers.Clone()
+	ginCtx.Request = ginReq
+	return context.WithValue(context.Background(), "gin", ginCtx)
+}
+
+func TestDetectOAuthClientSource_UnknownDefaultsToOpenCode(t *testing.T) {
+	if got := detectOAuthClientSource("curl/8.7.1"); got != oauthClientOpenCode {
+		t.Fatalf("unknown source = %v, want oauthClientOpenCode", got)
+	}
+}
+
+func TestClaudeExecutor_Execute_OAuthClaudeCodePassthroughBody(t *testing.T) {
+	var gotBody []byte
+	var gotHeaders http.Header
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var err error
+		gotBody, err = io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read body: %v", err)
+		}
+		gotHeaders = r.Header.Clone()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_1","type":"message","model":"claude-opus-4-7","role":"assistant","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":1,"output_tokens":1}}`))
+	}))
+	defer server.Close()
+
+	incomingBeta := "claude-code-20250219,interleaved-thinking-2025-05-14,redact-thinking-2026-02-12,context-management-2025-06-27,prompt-caching-scope-2026-01-05,advisor-tool-2026-03-01,advanced-tool-use-2025-11-20,effort-2025-11-24"
+	ctx := newClaudeExecutorTestContext(http.Header{
+		"User-Agent":                  []string{"claude-cli/2.1.119 (external, cli)"},
+		"Anthropic-Beta":              []string{incomingBeta},
+		"X-Stainless-Package-Version": []string{"0.81.0"},
+		"X-Stainless-Runtime-Version": []string{"v24.3.0"},
+		"X-Stainless-Os":              []string{"Windows"},
+		"X-Stainless-Arch":            []string{"x64"},
+	})
+
+	executor := NewClaudeExecutor(&config.Config{})
+	auth := &cliproxyauth.Auth{Attributes: map[string]string{
+		"api_key":  "sk-ant-oat01-claude-code",
+		"base_url": server.URL,
+	}}
+	payload := []byte(`{"model":"claude-opus-4-7","max_tokens":64000,"thinking":{"type":"adaptive"},"output_config":{"effort":"max"},"context_management":{"edits":[{"type":"clear_thinking_20251015","keep":"all"}]},"tools":[{"name":"Agent","input_schema":{"type":"object"}},{"name":"ToolSearch","input_schema":{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}},{"name":"Read","input_schema":{"type":"object"}}],"messages":[{"role":"user","content":"hi"}]}`)
+
+	_, err := executor.Execute(ctx, auth, cliproxyexecutor.Request{
+		Model:   "claude-opus-4-7",
+		Payload: payload,
+	}, cliproxyexecutor.Options{SourceFormat: sdktranslator.FromString("claude")})
+	if err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+
+	if !bytes.Equal(gotBody, payload) {
+		t.Fatalf("Claude Code OAuth body was mutated\nwant: %s\n got: %s", payload, gotBody)
+	}
+	if got := gotHeaders.Get("Anthropic-Beta"); got != incomingBeta {
+		t.Fatalf("Anthropic-Beta = %q, want original %q", got, incomingBeta)
+	}
+	assertClaudeFingerprint(t, gotHeaders, "claude-cli/2.1.119 (external, cli)", "0.81.0", "v24.3.0", "MacOS", "arm64")
+	if got := gjson.GetBytes(gotBody, "max_tokens").Int(); got != 64000 {
+		t.Fatalf("max_tokens = %d, want original 64000", got)
+	}
+	if got := gjson.GetBytes(gotBody, "tools.#(name==\"ToolSearch\").name").String(); got != "ToolSearch" {
+		t.Fatalf("ToolSearch should be preserved, got %q", got)
+	}
+}
+
+func TestClaudeExecutor_Execute_OAuthOpenCodePreservesVisibleThinking(t *testing.T) {
+	var gotBody []byte
+	var gotBeta string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBody, _ = io.ReadAll(r.Body)
+		gotBeta = r.Header.Get("Anthropic-Beta")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_1","type":"message","model":"claude-sonnet-4-5","role":"assistant","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":1,"output_tokens":1}}`))
+	}))
+	defer server.Close()
+
+	ctx := newClaudeExecutorTestContext(http.Header{
+		"User-Agent": []string{"opencode/1.14.19 ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.11"},
+	})
+	executor := NewClaudeExecutor(&config.Config{})
+	auth := &cliproxyauth.Auth{Attributes: map[string]string{
+		"api_key":  "sk-ant-oat01-opencode-visible-thinking",
+		"base_url": server.URL,
+	}}
+	payload := []byte(`{"model":"claude-sonnet-4-5","thinking":{"type":"enabled","budget_tokens":2048,"display":"summarized"},"tools":[{"name":"bash","input_schema":{"type":"object"}}],"messages":[{"role":"user","content":"hi"}]}`)
+
+	_, err := executor.Execute(ctx, auth, cliproxyexecutor.Request{
+		Model:   "claude-sonnet-4-5",
+		Payload: payload,
+	}, cliproxyexecutor.Options{SourceFormat: sdktranslator.FromString("claude")})
+	if err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+
+	if got := gjson.GetBytes(gotBody, "thinking.type").String(); got != "adaptive" {
+		t.Fatalf("thinking.type = %q, want adaptive", got)
+	}
+	if got := gjson.GetBytes(gotBody, "thinking.display").String(); got != "summarized" {
+		t.Fatalf("thinking.display = %q, want summarized", got)
+	}
+	if gjson.GetBytes(gotBody, "thinking.budget_tokens").Exists() {
+		t.Fatalf("thinking.budget_tokens should be removed for adaptive thinking")
+	}
+	if strings.Contains(gotBeta, "redact-thinking-2026-02-12") {
+		t.Fatalf("OpenCode OAuth beta should keep thinking visible, got %q", gotBeta)
+	}
+	if !strings.Contains(gotBeta, "advanced-tool-use-2025-11-20") {
+		t.Fatalf("OpenCode OAuth beta should include advanced tool use, got %q", gotBeta)
+	}
+}
+
+func TestClaudeExecutor_Execute_OAuthUnknownSourceDefaultsToOpenCode(t *testing.T) {
+	var gotBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_1","type":"message","model":"claude-sonnet-4-5","role":"assistant","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":1,"output_tokens":1}}`))
+	}))
+	defer server.Close()
+
+	ctx := newClaudeExecutorTestContext(http.Header{"User-Agent": []string{"unknown-client/1.0"}})
+	executor := NewClaudeExecutor(&config.Config{})
+	auth := &cliproxyauth.Auth{Attributes: map[string]string{
+		"api_key":  "sk-ant-oat01-unknown-default",
+		"base_url": server.URL,
+	}}
+	payload := []byte(`{"model":"claude-sonnet-4-5","thinking":{"type":"adaptive"},"messages":[{"role":"user","content":"hi"}]}`)
+
+	_, err := executor.Execute(ctx, auth, cliproxyexecutor.Request{
+		Model:   "claude-sonnet-4-5",
+		Payload: payload,
+	}, cliproxyexecutor.Options{SourceFormat: sdktranslator.FromString("claude")})
+	if err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+
+	if gjson.GetBytes(gotBody, "output_config.effort").Exists() {
+		t.Fatalf("unknown OAuth source should default to OpenCode and not inject effort, got body: %s", gotBody)
 	}
 }

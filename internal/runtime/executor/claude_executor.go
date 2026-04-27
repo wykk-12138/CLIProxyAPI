@@ -155,74 +155,79 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
 	}
 	originalPayload := originalPayloadSource
 	originalTranslated := sdktranslator.TranslateRequest(from, to, baseModel, originalPayload, stream)
-	body := sdktranslator.TranslateRequest(from, to, baseModel, req.Payload, stream)
-	body, _ = sjson.SetBytes(body, "model", baseModel)
-
-	body, err = thinking.ApplyThinking(body, req.Model, from.String(), to.String(), e.Identifier())
-	if err != nil {
-		return resp, err
-	}
-
-	// Apply cloaking (system prompt injection, fake user ID, sensitive word obfuscation)
-	// based on client type and configuration.
-	body = applyCloaking(ctx, e.cfg, auth, body, baseModel, apiKey)
-
-	requestedModel := helps.PayloadRequestedModel(opts, req.Model)
-	requestPath := helps.PayloadRequestPath(opts)
-	body = helps.ApplyPayloadConfigWithRoot(e.cfg, baseModel, to.String(), "", body, originalTranslated, requestedModel, requestPath)
-	body = ensureModelMaxTokens(body, baseModel)
-	body = forceOpusMaxTokens(body, baseModel)
-
-	// Disable thinking if tool_choice forces tool use (Anthropic API constraint)
-	body = disableThinkingIfToolChoiceForced(body)
-	body = normalizeClaudeTemperatureForThinking(body)
-
-	// Auto-inject cache_control if missing (optimization for ClawdBot/clients without caching support)
-	if countCacheControls(body) == 0 {
-		body = ensureCacheControl(body)
-	}
-
-	// Enforce Anthropic's cache_control block limit (max 4 breakpoints per request).
-	// Cloaking and ensureCacheControl may push the total over 4 when the client
-	// (e.g. Amp CLI) already sends multiple cache_control blocks.
-	body = enforceCacheControlLimit(body, 4)
-
-	// Normalize TTL values to prevent ordering violations under prompt-caching-scope-2026-01-05.
-	// A 1h-TTL block must not appear after a 5m-TTL block in evaluation order (tools→system→messages).
-	body = normalizeCacheControlTTL(body)
-
-	// Extract betas from body and convert to header
 	var extraBetas []string
-	extraBetas, body = extractAndRemoveBetas(body)
-	bodyForTranslation := body
-	bodyForUpstream := body
 	oauthToken := isClaudeOAuthToken(apiKey)
 	clientSource := detectOAuthClientSource(getClientUserAgent(ctx))
+	claudeCodePassthrough := oauthToken && clientSource == oauthClientClaudeCode && from == to
+	var bodyForTranslation []byte
+	var bodyForUpstream []byte
 	oauthToolNamesRemapped := false
 
-	// === OAuth Common Zone: applies to ALL OAuth clients (OpenCode, OpenClaw, Other) ===
-	if oauthToken {
-		// Tool prefix
-		if !auth.ToolPrefixDisabled() {
-			bodyForUpstream = applyClaudeToolPrefix(body, claudeToolPrefix)
-		}
-		// Inject context_management (matches real Claude Code 2.1.112).
-		// Force adaptive thinking for every OAuth-routed Claude model so the
-		// clear_thinking_20251015 edit below always has a valid companion
-		// (Sonnet and Haiku hit the same 400 that Opus did when thinking is
-		// missing or disabled). See ensureClaudeAdaptiveThinking.
-		bodyForUpstream = ensureClaudeAdaptiveThinking(bodyForUpstream, baseModel)
-		if !gjson.GetBytes(bodyForUpstream, "context_management").Exists() {
-			bodyForUpstream, _ = sjson.SetRawBytes(bodyForUpstream, "context_management",
-				[]byte(`{"edits":[{"type":"clear_thinking_20251015","keep":"all"}]}`))
-		}
-		// Remap tool names and strip unmapped tools
-		bodyForUpstream, oauthToolNamesRemapped = remapOAuthToolNamesEx(bodyForUpstream, true)
-	}
+	if claudeCodePassthrough {
+		bodyForUpstream = bytes.Clone(req.Payload)
+		bodyForTranslation = bodyForUpstream
+	} else {
+		body := sdktranslator.TranslateRequest(from, to, baseModel, req.Payload, stream)
+		body, _ = sjson.SetBytes(body, "model", baseModel)
 
-	// === OAuth OpenClaw Zone: OpenClaw and unrecognized clients ===
-	if oauthToken && clientSource != oauthClientOpenCode {
-		bodyForUpstream = ensureDefaultEffort(bodyForUpstream, "medium")
+		body, err = thinking.ApplyThinking(body, req.Model, from.String(), to.String(), e.Identifier())
+		if err != nil {
+			return resp, err
+		}
+
+		// Apply cloaking (system prompt injection, fake user ID, sensitive word obfuscation)
+		// based on client type and configuration.
+		body = applyCloaking(ctx, e.cfg, auth, body, baseModel, apiKey)
+
+		requestedModel := helps.PayloadRequestedModel(opts, req.Model)
+		requestPath := helps.PayloadRequestPath(opts)
+		body = helps.ApplyPayloadConfigWithRoot(e.cfg, baseModel, to.String(), "", body, originalTranslated, requestedModel, requestPath)
+		body = ensureModelMaxTokens(body, baseModel)
+		body = forceOpusMaxTokens(body, baseModel)
+
+		// Disable thinking if tool_choice forces tool use (Anthropic API constraint)
+		body = disableThinkingIfToolChoiceForced(body)
+		body = normalizeClaudeTemperatureForThinking(body)
+
+		// Auto-inject cache_control if missing (optimization for ClawdBot/clients without caching support)
+		if countCacheControls(body) == 0 {
+			body = ensureCacheControl(body)
+		}
+
+		// Enforce Anthropic's cache_control block limit (max 4 breakpoints per request).
+		// Cloaking and ensureCacheControl may push the total over 4 when the client
+		// (e.g. Amp CLI) already sends multiple cache_control blocks.
+		body = enforceCacheControlLimit(body, 4)
+
+		// Normalize TTL values to prevent ordering violations under prompt-caching-scope-2026-01-05.
+		// A 1h-TTL block must not appear after a 5m-TTL block in evaluation order (tools→system→messages).
+		body = normalizeCacheControlTTL(body)
+
+		// Extract betas from body and convert to header.
+		extraBetas, body = extractAndRemoveBetas(body)
+		bodyForTranslation = body
+		bodyForUpstream = body
+
+		// === OAuth Common Zone: applies to non-Claude-Code OAuth clients ===
+		if oauthToken {
+			if !auth.ToolPrefixDisabled() {
+				bodyForUpstream = applyClaudeToolPrefix(body, claudeToolPrefix)
+			}
+			// Inject context_management (matches real Claude Code 2.1.119).
+			// Force adaptive thinking for OAuth-routed third-party Claude clients so the
+			// clear_thinking_20251015 edit below always has a valid companion.
+			bodyForUpstream = ensureClaudeAdaptiveThinking(bodyForUpstream, baseModel)
+			if !gjson.GetBytes(bodyForUpstream, "context_management").Exists() {
+				bodyForUpstream, _ = sjson.SetRawBytes(bodyForUpstream, "context_management",
+					[]byte(`{"edits":[{"type":"clear_thinking_20251015","keep":"all"}]}`))
+			}
+			bodyForUpstream, oauthToolNamesRemapped = remapOAuthToolNamesEx(bodyForUpstream, true)
+		}
+
+		// === OAuth OpenClaw Zone ===
+		if oauthToken && clientSource == oauthClientOpenClaw {
+			bodyForUpstream = ensureDefaultEffort(bodyForUpstream, "medium")
+		}
 	}
 	if oauthToken {
 		// Sign after all OAuth-side payload mutations so cch is derived from
@@ -368,67 +373,75 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 	}
 	originalPayload := originalPayloadSource
 	originalTranslated := sdktranslator.TranslateRequest(from, to, baseModel, originalPayload, true)
-	body := sdktranslator.TranslateRequest(from, to, baseModel, req.Payload, true)
-	body, _ = sjson.SetBytes(body, "model", baseModel)
-
-	body, err = thinking.ApplyThinking(body, req.Model, from.String(), to.String(), e.Identifier())
-	if err != nil {
-		return nil, err
-	}
-
-	// Apply cloaking (system prompt injection, fake user ID, sensitive word obfuscation)
-	// based on client type and configuration.
-	body = applyCloaking(ctx, e.cfg, auth, body, baseModel, apiKey)
-
-	requestedModel := helps.PayloadRequestedModel(opts, req.Model)
-	requestPath := helps.PayloadRequestPath(opts)
-	body = helps.ApplyPayloadConfigWithRoot(e.cfg, baseModel, to.String(), "", body, originalTranslated, requestedModel, requestPath)
-	body = ensureModelMaxTokens(body, baseModel)
-	body = forceOpusMaxTokens(body, baseModel)
-
-	// Disable thinking if tool_choice forces tool use (Anthropic API constraint)
-	body = disableThinkingIfToolChoiceForced(body)
-	body = normalizeClaudeTemperatureForThinking(body)
-
-	// Auto-inject cache_control if missing (optimization for ClawdBot/clients without caching support)
-	if countCacheControls(body) == 0 {
-		body = ensureCacheControl(body)
-	}
-
-	// Enforce Anthropic's cache_control block limit (max 4 breakpoints per request).
-	body = enforceCacheControlLimit(body, 4)
-
-	// Normalize TTL values to prevent ordering violations under prompt-caching-scope-2026-01-05.
-	body = normalizeCacheControlTTL(body)
-
-	// Extract betas from body and convert to header
 	var extraBetas []string
-	extraBetas, body = extractAndRemoveBetas(body)
-	bodyForTranslation := body
-	bodyForUpstream := body
 	oauthToken := isClaudeOAuthToken(apiKey)
 	clientSourceStream := detectOAuthClientSource(getClientUserAgent(ctx))
+	claudeCodePassthrough := oauthToken && clientSourceStream == oauthClientClaudeCode && from == to
+	var bodyForTranslation []byte
+	var bodyForUpstream []byte
 	oauthToolNamesRemapped := false
 
-	// === OAuth Common Zone ===
-	if oauthToken {
-		if !auth.ToolPrefixDisabled() {
-			bodyForUpstream = applyClaudeToolPrefix(body, claudeToolPrefix)
-		}
-		// Force adaptive thinking for every OAuth-routed Claude model so the
-		// clear_thinking_20251015 edit below always has a valid companion.
-		// See ensureClaudeAdaptiveThinking.
-		bodyForUpstream = ensureClaudeAdaptiveThinking(bodyForUpstream, baseModel)
-		if !gjson.GetBytes(bodyForUpstream, "context_management").Exists() {
-			bodyForUpstream, _ = sjson.SetRawBytes(bodyForUpstream, "context_management",
-				[]byte(`{"edits":[{"type":"clear_thinking_20251015","keep":"all"}]}`))
-		}
-		bodyForUpstream, oauthToolNamesRemapped = remapOAuthToolNamesEx(bodyForUpstream, true)
-	}
+	if claudeCodePassthrough {
+		bodyForUpstream = bytes.Clone(req.Payload)
+		bodyForTranslation = bodyForUpstream
+	} else {
+		body := sdktranslator.TranslateRequest(from, to, baseModel, req.Payload, true)
+		body, _ = sjson.SetBytes(body, "model", baseModel)
 
-	// === OAuth OpenClaw Zone ===
-	if oauthToken && clientSourceStream != oauthClientOpenCode {
-		bodyForUpstream = ensureDefaultEffort(bodyForUpstream, "medium")
+		body, err = thinking.ApplyThinking(body, req.Model, from.String(), to.String(), e.Identifier())
+		if err != nil {
+			return nil, err
+		}
+
+		// Apply cloaking (system prompt injection, fake user ID, sensitive word obfuscation)
+		// based on client type and configuration.
+		body = applyCloaking(ctx, e.cfg, auth, body, baseModel, apiKey)
+
+		requestedModel := helps.PayloadRequestedModel(opts, req.Model)
+		requestPath := helps.PayloadRequestPath(opts)
+		body = helps.ApplyPayloadConfigWithRoot(e.cfg, baseModel, to.String(), "", body, originalTranslated, requestedModel, requestPath)
+		body = ensureModelMaxTokens(body, baseModel)
+		body = forceOpusMaxTokens(body, baseModel)
+
+		// Disable thinking if tool_choice forces tool use (Anthropic API constraint)
+		body = disableThinkingIfToolChoiceForced(body)
+		body = normalizeClaudeTemperatureForThinking(body)
+
+		// Auto-inject cache_control if missing (optimization for ClawdBot/clients without caching support)
+		if countCacheControls(body) == 0 {
+			body = ensureCacheControl(body)
+		}
+
+		// Enforce Anthropic's cache_control block limit (max 4 breakpoints per request).
+		body = enforceCacheControlLimit(body, 4)
+
+		// Normalize TTL values to prevent ordering violations under prompt-caching-scope-2026-01-05.
+		body = normalizeCacheControlTTL(body)
+
+		// Extract betas from body and convert to header.
+		extraBetas, body = extractAndRemoveBetas(body)
+		bodyForTranslation = body
+		bodyForUpstream = body
+
+		// === OAuth Common Zone: applies to non-Claude-Code OAuth clients ===
+		if oauthToken {
+			if !auth.ToolPrefixDisabled() {
+				bodyForUpstream = applyClaudeToolPrefix(body, claudeToolPrefix)
+			}
+			// Force adaptive thinking for OAuth-routed third-party Claude clients so the
+			// clear_thinking_20251015 edit below always has a valid companion.
+			bodyForUpstream = ensureClaudeAdaptiveThinking(bodyForUpstream, baseModel)
+			if !gjson.GetBytes(bodyForUpstream, "context_management").Exists() {
+				bodyForUpstream, _ = sjson.SetRawBytes(bodyForUpstream, "context_management",
+					[]byte(`{"edits":[{"type":"clear_thinking_20251015","keep":"all"}]}`))
+			}
+			bodyForUpstream, oauthToolNamesRemapped = remapOAuthToolNamesEx(bodyForUpstream, true)
+		}
+
+		// === OAuth OpenClaw Zone ===
+		if oauthToken && clientSourceStream == oauthClientOpenClaw {
+			bodyForUpstream = ensureDefaultEffort(bodyForUpstream, "medium")
+		}
 	}
 	if oauthToken {
 		// Sign after all OAuth-side payload mutations so cch is derived from
@@ -600,32 +613,36 @@ func (e *ClaudeExecutor) CountTokens(ctx context.Context, auth *cliproxyauth.Aut
 	to := sdktranslator.FromString("claude")
 	// Use streaming translation to preserve function calling, except for claude.
 	stream := from != to
-	body := sdktranslator.TranslateRequest(from, to, baseModel, req.Payload, stream)
-	body, _ = sjson.SetBytes(body, "model", baseModel)
-
-	if !strings.HasPrefix(baseModel, "claude-3-5-haiku") {
-		body = checkSystemInstructions(body)
-	}
-
-	// Keep count_tokens requests compatible with Anthropic cache-control constraints too.
-	body = enforceCacheControlLimit(body, 4)
-	body = normalizeCacheControlTTL(body)
-
-	// Extract betas from body and convert to header (for count_tokens too)
 	var extraBetas []string
-	extraBetas, body = extractAndRemoveBetas(body)
-	// === OAuth Common Zone (CountTokens) ===
 	oauthTokenCT := isClaudeOAuthToken(apiKey)
-	if oauthTokenCT {
-		if !auth.ToolPrefixDisabled() {
-			body = applyClaudeToolPrefix(body, claudeToolPrefix)
+	clientSourceCT := detectOAuthClientSource(getClientUserAgent(ctx))
+	claudeCodePassthrough := oauthTokenCT && clientSourceCT == oauthClientClaudeCode && from == to
+	var body []byte
+	if claudeCodePassthrough {
+		body = bytes.Clone(req.Payload)
+	} else {
+		body = sdktranslator.TranslateRequest(from, to, baseModel, req.Payload, stream)
+		body, _ = sjson.SetBytes(body, "model", baseModel)
+
+		if !strings.HasPrefix(baseModel, "claude-3-5-haiku") {
+			body = checkSystemInstructions(body)
 		}
-		body, _ = remapOAuthToolNamesEx(body, true)
-	}
-	// === OAuth OpenClaw Zone (CountTokens) ===
-	if oauthTokenCT {
-		clientSourceCT := detectOAuthClientSource(getClientUserAgent(ctx))
-		if clientSourceCT != oauthClientOpenCode {
+
+		// Keep count_tokens requests compatible with Anthropic cache-control constraints too.
+		body = enforceCacheControlLimit(body, 4)
+		body = normalizeCacheControlTTL(body)
+
+		// Extract betas from body and convert to header (for count_tokens too).
+		extraBetas, body = extractAndRemoveBetas(body)
+		// === OAuth Common Zone (CountTokens) ===
+		if oauthTokenCT {
+			if !auth.ToolPrefixDisabled() {
+				body = applyClaudeToolPrefix(body, claudeToolPrefix)
+			}
+			body, _ = remapOAuthToolNamesEx(body, true)
+		}
+		// === OAuth OpenClaw Zone (CountTokens) ===
+		if oauthTokenCT && clientSourceCT == oauthClientOpenClaw {
 			body = ensureDefaultEffort(body, "medium")
 		}
 	}
@@ -636,7 +653,6 @@ func (e *ClaudeExecutor) CountTokens(ctx context.Context, auth *cliproxyauth.Aut
 		return cliproxyexecutor.Response{}, err
 	}
 	if oauthTokenCT {
-		clientSourceCT := detectOAuthClientSource(getClientUserAgent(ctx))
 		applyClaudeHeaders(httpReq, auth, apiKey, false, extraBetas, e.cfg, clientSourceCT)
 	} else {
 		applyClaudeHeaders(httpReq, auth, apiKey, false, extraBetas, e.cfg)
@@ -969,15 +985,19 @@ func applyClaudeHeaders(r *http.Request, auth *cliproxyauth.Auth, apiKey string,
 		deviceProfile = helps.ResolveClaudeDeviceProfile(auth, apiKey, ginHeaders, cfg)
 	}
 
-	baseBetas := "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,redact-thinking-2026-02-12,context-management-2025-06-27,prompt-caching-scope-2026-01-05,advisor-tool-2026-03-01,effort-2025-11-24"
+	baseBetas := "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,redact-thinking-2026-02-12,context-management-2025-06-27,prompt-caching-scope-2026-01-05,advisor-tool-2026-03-01,advanced-tool-use-2025-11-20,effort-2025-11-24"
 	// For ALL OAuth clients (OpenCode, OpenClaw, etc.), ignore the client's Anthropic-Beta
 	// header and use the full Claude Code default beta set. Client betas are an incomplete
 	// subset that acts as a strong third-party fingerprint for Anthropic's detection.
 	isOAuthRequest := len(oauthClientOpts) > 0
-	if !isOAuthRequest {
+	oauthSource := oauthClientOpenCode
+	if isOAuthRequest {
+		oauthSource = oauthClientOpts[0]
+	}
+	if !isOAuthRequest || oauthSource == oauthClientClaudeCode {
 		if val := strings.TrimSpace(ginHeaders.Get("Anthropic-Beta")); val != "" {
 			baseBetas = val
-			if !strings.Contains(val, "oauth") {
+			if !isOAuthRequest && !strings.Contains(val, "oauth") {
 				baseBetas += ",oauth-2025-04-20"
 			}
 		}
@@ -1037,7 +1057,7 @@ func applyClaudeHeaders(r *http.Request, auth *cliproxyauth.Auth, apiKey string,
 		misc.EnsureHeader(r.Header, ginHeaders, "x-client-request-id", uuid.New().String())
 	}
 	r.Header.Set("Connection", "keep-alive")
-	// Real Claude Code 2.1.114 interactive sends application/json +
+	// Real Claude Code 2.1.119 interactive sends application/json +
 	// gzip, deflate, br, zstd. Streaming also uses encoded body, not Accept header.
 	r.Header.Set("Accept", "application/json")
 	r.Header.Set("Accept-Encoding", "gzip, deflate, br, zstd")
@@ -1060,6 +1080,9 @@ func applyClaudeHeaders(r *http.Request, auth *cliproxyauth.Auth, apiKey string,
 		attrs = auth.Attributes
 	}
 	util.ApplyCustomHeadersFromAttrs(r, attrs)
+	if isOAuthRequest {
+		helps.ApplyClaudeDeviceProfileHeaders(r, deviceProfile)
+	}
 	// Real Claude Code uses compressed encoding even for streams.
 	// CLIProxyAPI handles decompression via decodeResponseBody before scanning.
 }
@@ -1550,27 +1573,27 @@ func stripClaudeToolPrefixFromStreamLine(line []byte, prefix string) []byte {
 type oauthClientSource int
 
 const (
-	oauthClientOpenCode oauthClientSource = iota // OpenCode (UA starts with "opencode/")
-	oauthClientOpenClaw                          // OpenClaw (UA starts with "Anthropic/JS")
-	oauthClientOther                             // Unknown third-party client
+	oauthClientClaudeCode oauthClientSource = iota // Official Claude Code (UA starts with "claude-cli")
+	oauthClientOpenCode                            // OpenCode (UA starts with "opencode/")
+	oauthClientOpenClaw                            // OpenClaw (UA starts with "Anthropic/JS")
 )
 
 // detectOAuthClientSource identifies the downstream client from its User-Agent.
 // This is used ONLY on the Claude OAuth path to apply client-specific transformations.
-// ALL OAuth clients get: forced baseline device profile, full default Anthropic-Beta,
-// effort beta appended, and unmapped tools stripped. Client-specific differences:
-// OpenCode: keeps client effort value (no default injection).
-// OpenClaw and Other: also injects default effort="medium" when missing.
-// Unknown clients are treated as strict (same as OpenClaw) as a safety default.
+// Claude Code keeps request bodies intact; only auth and device headers are normalized.
+// OpenCode is the default for unknown third-party clients and keeps visible thinking.
+// OpenClaw additionally gets default effort="medium" when missing.
 func detectOAuthClientSource(userAgent string) oauthClientSource {
 	ua := strings.TrimSpace(userAgent)
 	switch {
+	case isClaudeCodeClient(ua):
+		return oauthClientClaudeCode
 	case strings.HasPrefix(ua, "opencode/"):
 		return oauthClientOpenCode
 	case strings.HasPrefix(ua, "Anthropic/JS"):
 		return oauthClientOpenClaw
 	default:
-		return oauthClientOther
+		return oauthClientOpenCode
 	}
 }
 
