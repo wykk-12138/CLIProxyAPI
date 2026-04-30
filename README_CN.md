@@ -190,6 +190,10 @@ Windows 桌面 UI，通过单一界面管理 CLIProxyAPI 和 Perplexity WebUI Sc
 
 Quotio 的跨平台（Tauri）移植版，支持 Windows / macOS / Linux。通过 CLIProxyAPI 管理多账号代理池（Codex、Claude Code、GitHub Copilot、Gemini CLI、Antigravity、Kiro、Cursor、Trae、GLM），提供每账号 5 小时 / 每周额度进度条、Codex 主动重置次数与一键重置、智能调度、用量统计及 Codex 多开实例，无需 API 密钥。
 
+### [CodexCliPlus](https://github.com/C4AL/CodexCliPlus)
+
+基于 CLIProxyAPI 的 Windows Codex CLI 本地优先桌面管理平台，聚焦简化本机配置、账号与运行状态管理，并为本地用户提供更完整的 Codex CLI 使用体验。
+
 > [!NOTE]  
 > 如果你开发了基于 CLIProxyAPI 的项目，请提交一个 PR（拉取请求）将其添加到此列表中。
 
