@@ -17,7 +17,7 @@ import (
 
 const (
 	defaultClaudeFingerprintUserAgent      = "claude-cli/2.1.114 (external, cli)"
-	defaultClaudeFingerprintPackageVersion = "0.81.0"
+	defaultClaudeFingerprintPackageVersion = "0.94.0"
 	defaultClaudeFingerprintRuntimeVersion = "v24.3.0"
 	defaultClaudeFingerprintOS             = "MacOS"
 	defaultClaudeFingerprintArch           = "arm64"
