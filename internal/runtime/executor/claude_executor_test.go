@@ -4,13 +4,10 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -18,7 +15,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/klauspost/compress/zstd"
-	xxHash64 "github.com/pierrec/xxHash/xxHash64"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
@@ -1865,7 +1861,7 @@ func TestDefaultClaudeVersion_UsesCanonicalDeviceProfileDefault(t *testing.T) {
 	}
 }
 
-func TestApplyClaudeHeaders_OAuthDropsRedactThinkingForNonClaudeCodeUA(t *testing.T) {
+func TestApplyClaudeHeaders_OAuthAllSourcesKeepRedactThinking(t *testing.T) {
 	resetClaudeDeviceProfileCache()
 	incoming := http.Header{
 		"User-Agent": []string{"opencode/1.14.19 ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.11"},
@@ -1880,8 +1876,8 @@ func TestApplyClaudeHeaders_OAuthDropsRedactThinkingForNonClaudeCodeUA(t *testin
 	applyClaudeHeaders(req, &cliproxyauth.Auth{Attributes: map[string]string{"api_key": "sk-ant-oat01-opencode"}}, "sk-ant-oat01-opencode", false, nil, &config.Config{}, oauthClientOpenCode)
 
 	beta := req.Header.Get("Anthropic-Beta")
-	if strings.Contains(beta, "redact-thinking-2026-02-12") {
-		t.Fatalf("non-Claude-Code OAuth UA should not advertise redact-thinking-2026-02-12; got beta=%q", beta)
+	if !strings.Contains(beta, "redact-thinking-2026-02-12") {
+		t.Fatalf("all OAuth sources must advertise redact-thinking-2026-02-12 for Claude Code-aligned thinking visibility; got beta=%q", beta)
 	}
 	if !strings.Contains(beta, "claude-code-20250219") {
 		t.Fatalf("baseline beta set should still be present; got beta=%q", beta)
@@ -1920,7 +1916,7 @@ func TestCheckSystemInstructions_DefaultBillingVersionComesFromCanonicalProfile(
 	}
 }
 
-func TestClaudeExecutor_Execute_OAuthSignsFinalBodyAfterEffortMutation(t *testing.T) {
+func TestClaudeExecutor_Execute_OAuthRemovesBillingHeaderAfterEffortMutation(t *testing.T) {
 	var gotBody []byte
 	var readErr error
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1962,24 +1958,8 @@ func TestClaudeExecutor_Execute_OAuthSignsFinalBodyAfterEffortMutation(t *testin
 		t.Fatalf("output_config.effort = %q, want %q", got, "medium")
 	}
 
-	billing := gjson.GetBytes(gotBody, "system.0.text").String()
-	cchPrefix := "cch="
-	start := strings.Index(billing, cchPrefix)
-	if start < 0 {
-		t.Fatalf("billing header missing cch field: %q", billing)
-	}
-	start += len(cchPrefix)
-	endRel := strings.Index(billing[start:], ";")
-	if endRel < 0 {
-		t.Fatalf("billing header cch field malformed: %q", billing)
-	}
-	actualCCH := billing[start : start+endRel]
-
-	placeholderBody := bytes.Replace(gotBody, []byte("cch="+actualCCH+";"), []byte("cch="+claudeBillingCCHPlaceholder+";"), 1)
-	h := sha256.Sum256(placeholderBody)
-	wantCCH := hex.EncodeToString(h[:])[:5]
-	if actualCCH != wantCCH {
-		t.Fatalf("cch = %q, want %q (hash from final serialized body with placeholder)", actualCCH, wantCCH)
+	if strings.Contains(string(gotBody), "x-anthropic-billing-header:") {
+		t.Fatalf("billing header should be removed from upstream body: %s", gotBody)
 	}
 }
 
@@ -2121,12 +2101,9 @@ func TestClaudeExecutor_ExperimentalCCHSigningDisabledByDefaultKeepsLegacyHeader
 		t.Fatal("expected request body to be captured")
 	}
 
-	billingHeader := gjson.GetBytes(seenBody, "system.0.text").String()
-	if !strings.HasPrefix(billingHeader, "x-anthropic-billing-header:") {
-		t.Fatalf("system.0.text = %q, want billing header", billingHeader)
-	}
-	if strings.Contains(billingHeader, "cch=00000;") {
-		t.Fatalf("legacy mode should not forward cch placeholder, got %q", billingHeader)
+	sys0 := gjson.GetBytes(seenBody, "system.0.text").String()
+	if strings.HasPrefix(sys0, "x-anthropic-billing-header:") {
+		t.Fatalf("billing header should be removed from upstream body, got: %q", sys0)
 	}
 }
 
@@ -2168,16 +2145,12 @@ func TestClaudeExecutor_ExperimentalCCHSigningOptInSignsFinalBody(t *testing.T) 
 		t.Fatalf("message text = %q, want %q", got, messageText)
 	}
 
-	billingPattern := regexp.MustCompile(`(x-anthropic-billing-header:[^"]*?\bcch=)([0-9a-f]{5})(;)`)
-	match := billingPattern.FindSubmatch(seenBody)
-	if match == nil {
-		t.Fatalf("expected signed billing header in body: %s", string(seenBody))
+	sys0 := gjson.GetBytes(seenBody, "system.0.text").String()
+	if strings.HasPrefix(sys0, "x-anthropic-billing-header:") {
+		t.Fatalf("billing header should be removed from upstream body, got: %q", sys0)
 	}
-	actualCCH := string(match[2])
-	unsignedBody := billingPattern.ReplaceAll(seenBody, []byte(`${1}00000${3}`))
-	wantCCH := fmt.Sprintf("%05x", xxHash64.Checksum(unsignedBody, 0x6E52736AC806831E)&0xFFFFF)
-	if actualCCH != wantCCH {
-		t.Fatalf("cch = %q, want %q\nbody: %s", actualCCH, wantCCH, string(seenBody))
+	if !strings.Contains(string(seenBody), "You are Claude Code") {
+		t.Fatalf("other system blocks should remain, got body: %s", string(seenBody))
 	}
 }
 
@@ -2487,7 +2460,7 @@ func TestClaudeExecutor_Execute_OAuthClaudeCodePassthroughBody(t *testing.T) {
 	}
 }
 
-func TestClaudeExecutor_Execute_OAuthOpenCodePreservesVisibleThinking(t *testing.T) {
+func TestClaudeExecutor_Execute_OAuthOpenCodeRedactedThinkingLikeClaudeCode(t *testing.T) {
 	var gotBody []byte
 	var gotBeta string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2503,7 +2476,7 @@ func TestClaudeExecutor_Execute_OAuthOpenCodePreservesVisibleThinking(t *testing
 	})
 	executor := NewClaudeExecutor(&config.Config{})
 	auth := &cliproxyauth.Auth{Attributes: map[string]string{
-		"api_key":  "sk-ant-oat01-opencode-visible-thinking",
+		"api_key":  "sk-ant-oat01-opencode-redacted-thinking",
 		"base_url": server.URL,
 	}}
 	payload := []byte(`{"model":"claude-sonnet-4-5","thinking":{"type":"enabled","budget_tokens":2048,"display":"summarized"},"tools":[{"name":"bash","input_schema":{"type":"object"}}],"messages":[{"role":"user","content":"hi"}]}`)
@@ -2525,11 +2498,11 @@ func TestClaudeExecutor_Execute_OAuthOpenCodePreservesVisibleThinking(t *testing
 	if gjson.GetBytes(gotBody, "thinking.budget_tokens").Exists() {
 		t.Fatalf("thinking.budget_tokens should be removed for adaptive thinking")
 	}
-	if strings.Contains(gotBeta, "redact-thinking-2026-02-12") {
-		t.Fatalf("OpenCode OAuth beta should keep thinking visible, got %q", gotBeta)
+	if !strings.Contains(gotBeta, "redact-thinking-2026-02-12") {
+		t.Fatalf("all OAuth sources must advertise redact-thinking-2026-02-12 for Claude Code-aligned thinking visibility; got beta=%q", gotBeta)
 	}
 	if !strings.Contains(gotBeta, "advanced-tool-use-2025-11-20") {
-		t.Fatalf("OpenCode OAuth beta should include advanced tool use, got %q", gotBeta)
+		t.Fatalf("OAuth beta should include advanced tool use, got %q", gotBeta)
 	}
 }
 
@@ -2560,5 +2533,171 @@ func TestClaudeExecutor_Execute_OAuthUnknownSourceDefaultsToOpenCode(t *testing.
 
 	if gjson.GetBytes(gotBody, "output_config.effort").Exists() {
 		t.Fatalf("unknown OAuth source should default to OpenCode and not inject effort, got body: %s", gotBody)
+	}
+}
+
+func TestRemoveBillingHeaderFromSystem_StripsBillingBlock(t *testing.T) {
+	body := []byte(`{"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.119.abc; cc_entrypoint=cli; cch=12345;"},{"type":"text","text":"You are Claude Code."},{"type":"text","text":"long intro"}],"messages":[{"role":"user","content":"hi"}]}`)
+	result := removeBillingHeaderFromSystem(body)
+
+	sys0 := gjson.GetBytes(result, "system.0.text").String()
+	if strings.HasPrefix(sys0, "x-anthropic-billing-header:") {
+		t.Fatalf("billing header was not removed: %q", sys0)
+	}
+	if gjson.GetBytes(result, "system.#").Int() != 2 {
+		t.Fatalf("expected 2 system blocks after removal, got %d", gjson.GetBytes(result, "system.#").Int())
+	}
+}
+
+func TestRemoveBillingHeaderFromSystem_StripsAllBillingBlocks(t *testing.T) {
+	body := []byte(`{"system":[{"type":"text","text":"keep before"},{"type":"text","text":"x-anthropic-billing-header: first"},{"type":"text","text":"keep after"},{"type":"text","text":"x-anthropic-billing-header: second"}],"messages":[{"role":"user","content":"hi"}]}`)
+	result := removeBillingHeaderFromSystem(body)
+
+	if got := gjson.GetBytes(result, "system.#").Int(); got != 2 {
+		t.Fatalf("expected 2 non-billing system blocks after removal, got %d: %s", got, result)
+	}
+	for _, idx := range []string{"0", "1"} {
+		text := gjson.GetBytes(result, "system."+idx+".text").String()
+		if strings.HasPrefix(text, "x-anthropic-billing-header:") {
+			t.Fatalf("billing header survived at system.%s: %q", idx, text)
+		}
+	}
+}
+
+func TestCheckSystemInstructions_DoesNotForwardIncomingBillingHeader(t *testing.T) {
+	body := []byte(`{"system":[{"type":"text","text":"regular instruction"},{"type":"text","text":"x-anthropic-billing-header: incoming"}],"messages":[{"role":"user","content":"hi"}]}`)
+	result := removeBillingHeaderFromSystem(checkSystemInstructions(body))
+
+	if strings.Contains(string(result), "x-anthropic-billing-header:") {
+		t.Fatalf("incoming billing header should not be forwarded into system or messages: %s", result)
+	}
+}
+
+func TestRemoveBillingHeaderFromSystem_PreservesWhenNoBilling(t *testing.T) {
+	body := []byte(`{"system":[{"type":"text","text":"You are a helpful assistant."}],"messages":[{"role":"user","content":"hi"}]}`)
+	result := removeBillingHeaderFromSystem(body)
+	sys0 := gjson.GetBytes(result, "system.0.text").String()
+	if sys0 != "You are a helpful assistant." {
+		t.Fatalf("system text changed: %q", sys0)
+	}
+}
+
+func TestRemoveBillingHeaderFromSystem_RemovesSystemWhenOnlyBilling(t *testing.T) {
+	body := []byte(`{"system":[{"type":"text","text":"x-anthropic-billing-header: cc_version=2.1.119.abc; cc_entrypoint=cli; cch=12345;"}],"messages":[{"role":"user","content":"hi"}]}`)
+	result := removeBillingHeaderFromSystem(body)
+	if gjson.GetBytes(result, "system").Exists() {
+		t.Fatalf("system should be removed when billing is the only block")
+	}
+}
+
+func TestOverridePassthroughUserID_PreservesSessionID(t *testing.T) {
+	originalUserID := `{"device_id":"old-device-64-hex-string-0123456789abcdef","account_uuid":"old-uuid","session_id":"keep-me-session"}`
+	body, _ := sjson.SetBytes([]byte(`{"messages":[{"role":"user","content":"hi"}]}`), "metadata.user_id", originalUserID)
+
+	result := overridePassthroughUserID(body, "new-device-id", "new-account-uuid")
+	userID := gjson.GetBytes(result, "metadata.user_id").String()
+
+	if gjson.Get(userID, "device_id").String() != "new-device-id" {
+		t.Fatalf("device_id not overridden: %q", userID)
+	}
+	if gjson.Get(userID, "account_uuid").String() != "new-account-uuid" {
+		t.Fatalf("account_uuid not overridden: %q", userID)
+	}
+	if gjson.Get(userID, "session_id").String() != "keep-me-session" {
+		t.Fatalf("session_id was not preserved: %q", userID)
+	}
+}
+
+func TestOverridePassthroughUserID_NoopWhenConfigEmpty(t *testing.T) {
+	originalUserID := `{"device_id":"old-device","account_uuid":"old-uuid","session_id":"session-1"}`
+	body, _ := sjson.SetBytes([]byte(`{"messages":[{"role":"user","content":"hi"}]}`), "metadata.user_id", originalUserID)
+
+	result := overridePassthroughUserID(body, "", "")
+	if result == nil {
+		t.Fatal("result should not be nil")
+	}
+	if string(result) != string(body) {
+		t.Fatal("body should be unchanged when config is empty")
+	}
+}
+
+func TestClaudeExecutor_Execute_OAuthRemovesBillingHeaderFromUpstream(t *testing.T) {
+	var gotBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_1","type":"message","model":"claude-sonnet-4-5","role":"assistant","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":1,"output_tokens":1}}`))
+	}))
+	defer server.Close()
+
+	ctx := newClaudeExecutorTestContext(http.Header{
+		"User-Agent": []string{"openclaw/1.0"},
+	})
+	executor := NewClaudeExecutor(&config.Config{})
+	auth := &cliproxyauth.Auth{Attributes: map[string]string{
+		"api_key":  "sk-ant-oat01-openclaw",
+		"base_url": server.URL,
+	}}
+	payload := []byte(`{"model":"claude-sonnet-4-5","messages":[{"role":"user","content":"hi"}]}`)
+
+	_, err := executor.Execute(ctx, auth, cliproxyexecutor.Request{
+		Model:   "claude-sonnet-4-5",
+		Payload: payload,
+	}, cliproxyexecutor.Options{SourceFormat: sdktranslator.FromString("claude")})
+	if err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+
+	sys0 := gjson.GetBytes(gotBody, "system.0.text").String()
+	if strings.HasPrefix(sys0, "x-anthropic-billing-header:") {
+		t.Fatalf("billing header should be removed from upstream body, got: %q", sys0)
+	}
+	if !strings.Contains(string(gotBody), "You are Claude Code") {
+		t.Fatalf("other system blocks should remain intact")
+	}
+}
+
+func TestClaudeExecutor_Execute_OAuthPassthroughOverridesUserID(t *testing.T) {
+	var gotBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_1","type":"message","model":"claude-opus-4-7","role":"assistant","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":1,"output_tokens":1}}`))
+	}))
+	defer server.Close()
+
+	ctx := newClaudeExecutorTestContext(http.Header{
+		"User-Agent": []string{"claude-cli/2.1.119 (external, cli)"},
+	})
+	executor := NewClaudeExecutor(&config.Config{
+		ClaudeHeaderDefaults: config.ClaudeHeaderDefaults{
+			DeviceID:    "cfg-device-id-hex",
+			AccountUUID: "cfg-account-uuid",
+		},
+	})
+	auth := &cliproxyauth.Auth{Attributes: map[string]string{
+		"api_key":  "sk-ant-oat01-claude-code",
+		"base_url": server.URL,
+	}}
+	userID := `{"device_id":"old-device-id","account_uuid":"old-uuid","session_id":"keep-me-session"}`
+	payload, _ := sjson.SetBytes([]byte(`{"model":"claude-opus-4-7","messages":[{"role":"user","content":"hi"}]}`), "metadata.user_id", userID)
+
+	_, err := executor.Execute(ctx, auth, cliproxyexecutor.Request{
+		Model:   "claude-opus-4-7",
+		Payload: payload,
+	}, cliproxyexecutor.Options{SourceFormat: sdktranslator.FromString("claude")})
+	if err != nil {
+		t.Fatalf("Execute error: %v", err)
+	}
+
+	resultUserID := gjson.GetBytes(gotBody, "metadata.user_id").String()
+	if gjson.Get(resultUserID, "device_id").String() != "cfg-device-id-hex" {
+		t.Fatalf("device_id not overridden to config value: %q", resultUserID)
+	}
+	if gjson.Get(resultUserID, "account_uuid").String() != "cfg-account-uuid" {
+		t.Fatalf("account_uuid not overridden to config value: %q", resultUserID)
+	}
+	if gjson.Get(resultUserID, "session_id").String() != "keep-me-session" {
+		t.Fatalf("session_id not preserved: %q", resultUserID)
 	}
 }

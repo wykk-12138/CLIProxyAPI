@@ -165,6 +165,12 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
 	if claudeCodePassthrough {
 		bodyForUpstream = bytes.Clone(req.Payload)
 		bodyForTranslation = bodyForUpstream
+		var cfgDeviceID, cfgAccountUUID string
+		if e.cfg != nil {
+			cfgDeviceID = strings.TrimSpace(e.cfg.ClaudeHeaderDefaults.DeviceID)
+			cfgAccountUUID = strings.TrimSpace(e.cfg.ClaudeHeaderDefaults.AccountUUID)
+		}
+		bodyForUpstream = overridePassthroughUserID(bodyForUpstream, cfgDeviceID, cfgAccountUUID)
 	} else {
 		body := sdktranslator.TranslateRequest(from, to, baseModel, req.Payload, stream)
 		body, _ = sjson.SetBytes(body, "model", baseModel)
@@ -219,12 +225,15 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
 			}
 		}
 	}
+	bodyForUpstream = removeBillingHeaderFromSystem(bodyForUpstream)
 	if oauthToken {
 		bodyForUpstream = signAnthropicMessagesBody(bodyForUpstream)
 	}
 	if !oauthToken && experimentalCCHSigningEnabled(e.cfg, auth) {
 		bodyForUpstream = signAnthropicMessagesBody(bodyForUpstream)
 	}
+
+	bodyForUpstream = removeBillingHeaderFromSystem(bodyForUpstream)
 
 	url := fmt.Sprintf("%s/v1/messages?beta=true", baseURL)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyForUpstream))
@@ -368,6 +377,12 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 	if claudeCodePassthrough {
 		bodyForUpstream = bytes.Clone(req.Payload)
 		bodyForTranslation = bodyForUpstream
+		var cfgDeviceID, cfgAccountUUID string
+		if e.cfg != nil {
+			cfgDeviceID = strings.TrimSpace(e.cfg.ClaudeHeaderDefaults.DeviceID)
+			cfgAccountUUID = strings.TrimSpace(e.cfg.ClaudeHeaderDefaults.AccountUUID)
+		}
+		bodyForUpstream = overridePassthroughUserID(bodyForUpstream, cfgDeviceID, cfgAccountUUID)
 	} else {
 		body := sdktranslator.TranslateRequest(from, to, baseModel, req.Payload, true)
 		body, _ = sjson.SetBytes(body, "model", baseModel)
@@ -419,12 +434,15 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 			}
 		}
 	}
+	bodyForUpstream = removeBillingHeaderFromSystem(bodyForUpstream)
 	if oauthToken {
 		bodyForUpstream = signAnthropicMessagesBody(bodyForUpstream)
 	}
 	if !oauthToken && experimentalCCHSigningEnabled(e.cfg, auth) {
 		bodyForUpstream = signAnthropicMessagesBody(bodyForUpstream)
 	}
+
+	bodyForUpstream = removeBillingHeaderFromSystem(bodyForUpstream)
 
 	url := fmt.Sprintf("%s/v1/messages?beta=true", baseURL)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyForUpstream))
@@ -654,6 +672,12 @@ func (e *ClaudeExecutor) CountTokens(ctx context.Context, auth *cliproxyauth.Aut
 	var body []byte
 	if claudeCodePassthrough {
 		body = bytes.Clone(req.Payload)
+		var cfgDeviceID, cfgAccountUUID string
+		if e.cfg != nil {
+			cfgDeviceID = strings.TrimSpace(e.cfg.ClaudeHeaderDefaults.DeviceID)
+			cfgAccountUUID = strings.TrimSpace(e.cfg.ClaudeHeaderDefaults.AccountUUID)
+		}
+		body = overridePassthroughUserID(body, cfgDeviceID, cfgAccountUUID)
 	} else {
 		body = sdktranslator.TranslateRequest(from, to, baseModel, req.Payload, stream)
 		body, _ = sjson.SetBytes(body, "model", baseModel)
@@ -675,6 +699,8 @@ func (e *ClaudeExecutor) CountTokens(ctx context.Context, auth *cliproxyauth.Aut
 			}
 		}
 	}
+
+	body = removeBillingHeaderFromSystem(body)
 
 	url := fmt.Sprintf("%s/v1/messages/count_tokens?beta=true", baseURL)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
@@ -1033,19 +1059,10 @@ func applyClaudeHeaders(r *http.Request, auth *cliproxyauth.Auth, apiKey string,
 				baseBetas += ",oauth-2025-04-20"
 			}
 		}
-	} else {
-		// Non-Claude-Code OAuth clients (OpenCode etc.) cannot render encrypted
-		// thinking blocks: when `redact-thinking-2026-02-12` is advertised the
-		// server returns only `signature_delta`, hiding reasoning from the user.
-		// Real Claude Code UA keeps the beta for full fingerprint parity; other
-		// clients drop it so the server emits visible `thinking_delta` deltas.
-		incomingUA := strings.TrimSpace(ginHeaders.Get("User-Agent"))
-		if !isClaudeCodeClient(incomingUA) {
-			baseBetas = strings.ReplaceAll(baseBetas, ",redact-thinking-2026-02-12", "")
-			baseBetas = strings.ReplaceAll(baseBetas, "redact-thinking-2026-02-12,", "")
-			baseBetas = strings.TrimPrefix(baseBetas, "redact-thinking-2026-02-12")
-		}
 	}
+	// All OAuth sources (OpenCode, OpenClaw, unknown) now align with Claude Code
+	// thinking visibility: redact-thinking-2026-02-12 is kept so the server returns
+	// encrypted thinking blocks (signature_delta), hiding plaintext reasoning.
 	if !strings.Contains(baseBetas, "interleaved-thinking") {
 		baseBetas += ",interleaved-thinking-2025-05-14"
 	}
@@ -1137,6 +1154,39 @@ func claudeCreds(a *cliproxyauth.Auth) (apiKey, baseURL string) {
 
 func checkSystemInstructions(payload []byte) []byte {
 	return checkSystemInstructionsWithSigningMode(payload, false, false, false, helps.DefaultClaudeVersion(nil), "", "")
+}
+
+// removeBillingHeaderFromSystem strips any system text block whose text starts
+// with x-anthropic-billing-header: from the payload before it is sent upstream.
+func removeBillingHeaderFromSystem(payload []byte) []byte {
+	system := gjson.GetBytes(payload, "system")
+	if system.Type == gjson.String {
+		if strings.HasPrefix(system.String(), "x-anthropic-billing-header:") {
+			payload, _ = sjson.DeleteBytes(payload, "system")
+		}
+		return payload
+	}
+	if !system.IsArray() {
+		return payload
+	}
+
+	var parts []string
+	system.ForEach(func(_, elem gjson.Result) bool {
+		if elem.Get("type").String() == "text" && strings.HasPrefix(elem.Get("text").String(), "x-anthropic-billing-header:") {
+			return true
+		}
+		parts = append(parts, elem.Raw)
+		return true
+	})
+
+	if len(parts) == 0 {
+		// Remove the system array entirely when billing headers were the only blocks.
+		payload, _ = sjson.DeleteBytes(payload, "system")
+		return payload
+	}
+
+	payload, _ = sjson.SetRawBytes(payload, "system", []byte("["+strings.Join(parts, ",")+"]"))
+	return payload
 }
 
 func isClaudeOAuthToken(apiKey string) bool {
@@ -1606,7 +1656,7 @@ const (
 // detectOAuthClientSource identifies the downstream client from its User-Agent.
 // This is used ONLY on the Claude OAuth path to apply client-specific transformations.
 // Claude Code keeps request bodies intact; only auth and device headers are normalized.
-// OpenCode is the default for unknown third-party clients and keeps visible thinking.
+// OpenCode is the default for unknown third-party clients; all OAuth sources now align with Claude Code thinking visibility.
 // OpenClaw additionally gets default effort="medium" when missing.
 func detectOAuthClientSource(userAgent string) oauthClientSource {
 	ua := strings.TrimSpace(userAgent)
@@ -1726,6 +1776,33 @@ func injectFakeUserID(payload []byte, apiKey string, useCache bool, deviceID, ac
 	return payload
 }
 
+func overridePassthroughUserID(payload []byte, deviceID, accountUUID string) []byte {
+	if deviceID == "" && accountUUID == "" {
+		return payload
+	}
+
+	existingUserID := strings.TrimSpace(gjson.GetBytes(payload, "metadata.user_id").String())
+	if existingUserID == "" || !strings.HasPrefix(existingUserID, "{") {
+		payload, _ = sjson.SetBytes(payload, "metadata.user_id", helps.GenerateFakeUserIDWithConfig(deviceID, accountUUID))
+		return payload
+	}
+
+	sessionID := gjson.Get(existingUserID, "session_id").String()
+	userIDBytes := []byte(existingUserID)
+	if deviceID != "" {
+		userIDBytes, _ = sjson.SetBytes(userIDBytes, "device_id", deviceID)
+	}
+	if accountUUID != "" {
+		userIDBytes, _ = sjson.SetBytes(userIDBytes, "account_uuid", accountUUID)
+	}
+	if sessionID == "" {
+		userIDBytes, _ = sjson.SetBytes(userIDBytes, "session_id", uuid.New().String())
+	}
+
+	payload, _ = sjson.SetBytes(payload, "metadata.user_id", string(userIDBytes))
+	return payload
+}
+
 // fingerprintSalt is the salt used by Claude Code to compute the 3-char build fingerprint.
 const fingerprintSalt = "59cf53e54c78"
 
@@ -1782,6 +1859,7 @@ func checkSystemInstructionsWithMode(payload []byte, strictMode bool) []byte {
 //
 // Any incoming user/system instructions are moved to the first user message in non-strict mode.
 func checkSystemInstructionsWithSigningMode(payload []byte, strictMode bool, experimentalCCHSigning bool, oauthMode bool, version, entrypoint, workload string) []byte {
+	payload = removeBillingHeaderFromSystem(payload)
 	system := gjson.GetBytes(payload, "system")
 
 	// Extract original message text for fingerprint computation (before billing injection).
