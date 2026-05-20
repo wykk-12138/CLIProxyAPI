@@ -1913,8 +1913,8 @@ func TestApplyClaudeHeaders_DefaultStainlessRuntimeVersionMatches2_1_114(t *test
 }
 
 func TestDefaultClaudeVersion_UsesCanonicalDeviceProfileDefault(t *testing.T) {
-	if got := helps.DefaultClaudeVersion(nil); got != "2.1.119" {
-		t.Fatalf("DefaultClaudeVersion(nil) = %q, want %q", got, "2.1.119")
+	if got := helps.DefaultClaudeVersion(nil); got != "2.1.141" {
+		t.Fatalf("DefaultClaudeVersion(nil) = %q, want %q", got, "2.1.141")
 	}
 }
 
@@ -1947,7 +1947,8 @@ func TestApplyClaudeHeaders_OAuthAllSourcesKeepRedactThinking(t *testing.T) {
 func TestApplyClaudeHeaders_OAuthKeepsRedactThinkingForClaudeCodeUA(t *testing.T) {
 	resetClaudeDeviceProfileCache()
 	incoming := http.Header{
-		"User-Agent": []string{"claude-cli/2.1.119 (external, cli)"},
+		"User-Agent":     []string{"claude-cli/2.1.119 (external, cli)"},
+		"Anthropic-Beta": []string{"claude-code-20250219,redact-thinking-2026-02-12"},
 	}
 	req := newClaudeHeaderTestRequest(t, incoming)
 	ginCtx, _ := gin.CreateTestContext(httptest.NewRecorder())
@@ -1968,8 +1969,8 @@ func TestCheckSystemInstructions_DefaultBillingVersionComesFromCanonicalProfile(
 	payload := []byte(`{"messages":[{"role":"user","content":"hi"}]}`)
 	out := checkSystemInstructions(payload)
 	billing := gjson.GetBytes(out, "system.0.text").String()
-	if !strings.Contains(billing, "cc_version=2.1.119.") {
-		t.Fatalf("billing header should contain cc_version=2.1.119.*, got %q", billing)
+	if !strings.Contains(billing, "cc_version=2.1.141.") {
+		t.Fatalf("billing header should contain cc_version=2.1.141.*, got %q", billing)
 	}
 }
 
