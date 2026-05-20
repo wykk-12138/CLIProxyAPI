@@ -272,7 +272,11 @@ nonstream-keepalive-interval: 0
 #   arch: "arm64"
 #   timeout: "600"
 #   stabilize-device-profile: false  # optional, default false; set true to enable per-auth/API-key fingerprint pinning
-#   device-id: ""      # optional: 64-hex-char device fingerprint from Claude Code keychain credentials; random if empty
+#   device-id: ""      # optional: legacy single 64-hex-char device fingerprint; random if empty
+#   # device-id:        # optional alternative: choose by Claude Code request X-Stainless-Os header
+#   #   macos: ""
+#   #   windows: ""
+#   #   default: ""
 #   account-uuid: ""   # optional: account UUID from Claude Code keychain credentials; random if empty
 
 # Default headers for Codex OAuth model requests.

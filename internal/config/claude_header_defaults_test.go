@@ -53,3 +53,58 @@ claude-header-defaults:
 		t.Fatalf("StabilizeDeviceProfile = %v, want false", got)
 	}
 }
+
+func TestLoadConfigOptional_ClaudeDeviceIDPerOS(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	configYAML := []byte(`
+claude-header-defaults:
+  device-id:
+    macos: "  mac-device  "
+    windows: "  windows-device  "
+    default: "  default-device  "
+  account-uuid: "  account-uuid  "
+`)
+	if err := os.WriteFile(configPath, configYAML, 0o600); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	cfg, err := LoadConfigOptional(configPath, false)
+	if err != nil {
+		t.Fatalf("LoadConfigOptional() error = %v", err)
+	}
+
+	if got := cfg.ClaudeHeaderDefaults.DeviceID.ValueForOS("MacOS"); got != "mac-device" {
+		t.Fatalf("MacOS device-id = %q, want mac-device", got)
+	}
+	if got := cfg.ClaudeHeaderDefaults.DeviceID.ValueForOS("Windows"); got != "windows-device" {
+		t.Fatalf("Windows device-id = %q, want windows-device", got)
+	}
+	if got := cfg.ClaudeHeaderDefaults.DeviceID.ValueForOS("Linux"); got != "default-device" {
+		t.Fatalf("fallback device-id = %q, want default-device", got)
+	}
+	if got := cfg.ClaudeHeaderDefaults.AccountUUID; got != "account-uuid" {
+		t.Fatalf("AccountUUID = %q, want account-uuid", got)
+	}
+}
+
+func TestLoadConfigOptional_ClaudeDeviceIDLegacyString(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	configYAML := []byte(`
+claude-header-defaults:
+  device-id: "  legacy-device  "
+`)
+	if err := os.WriteFile(configPath, configYAML, 0o600); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+
+	cfg, err := LoadConfigOptional(configPath, false)
+	if err != nil {
+		t.Fatalf("LoadConfigOptional() error = %v", err)
+	}
+
+	if got := cfg.ClaudeHeaderDefaults.DeviceID.Value(); got != "legacy-device" {
+		t.Fatalf("legacy device-id = %q, want legacy-device", got)
+	}
+}

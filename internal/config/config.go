@@ -239,15 +239,62 @@ func defaultPluginInstanceConfigNode() *yaml.Node {
 // profiles are enabled, OS/Arch become the pinned platform baseline, while
 // UserAgent/PackageVersion/RuntimeVersion seed the upgradeable software fingerprint.
 type ClaudeHeaderDefaults struct {
-	UserAgent              string `yaml:"user-agent" json:"user-agent"`
-	PackageVersion         string `yaml:"package-version" json:"package-version"`
-	RuntimeVersion         string `yaml:"runtime-version" json:"runtime-version"`
-	OS                     string `yaml:"os" json:"os"`
-	Arch                   string `yaml:"arch" json:"arch"`
-	Timeout                string `yaml:"timeout" json:"timeout"`
-	StabilizeDeviceProfile *bool  `yaml:"stabilize-device-profile,omitempty" json:"stabilize-device-profile,omitempty"`
-	DeviceID               string `yaml:"device-id,omitempty" json:"device-id,omitempty"`
-	AccountUUID            string `yaml:"account-uuid,omitempty" json:"account-uuid,omitempty"`
+	UserAgent              string               `yaml:"user-agent" json:"user-agent"`
+	PackageVersion         string               `yaml:"package-version" json:"package-version"`
+	RuntimeVersion         string               `yaml:"runtime-version" json:"runtime-version"`
+	OS                     string               `yaml:"os" json:"os"`
+	Arch                   string               `yaml:"arch" json:"arch"`
+	Timeout                string               `yaml:"timeout" json:"timeout"`
+	StabilizeDeviceProfile *bool                `yaml:"stabilize-device-profile,omitempty" json:"stabilize-device-profile,omitempty"`
+	DeviceID               ClaudeDeviceIDConfig `yaml:"device-id,omitempty" json:"device-id,omitempty"`
+	AccountUUID            string               `yaml:"account-uuid,omitempty" json:"account-uuid,omitempty"`
+}
+
+// ClaudeDeviceIDConfig supports either a single legacy device-id string or
+// per-source OS values for Claude Code passthrough requests.
+type ClaudeDeviceIDConfig struct {
+	Default string `yaml:"default,omitempty" json:"default,omitempty"`
+	MacOS   string `yaml:"macos,omitempty" json:"macos,omitempty"`
+	Windows string `yaml:"windows,omitempty" json:"windows,omitempty"`
+}
+
+func (c *ClaudeDeviceIDConfig) UnmarshalYAML(value *yaml.Node) error {
+	if c == nil || value == nil {
+		return nil
+	}
+	switch value.Kind {
+	case yaml.ScalarNode:
+		c.Default = strings.TrimSpace(value.Value)
+		return nil
+	case yaml.MappingNode:
+		type alias ClaudeDeviceIDConfig
+		var out alias
+		if err := value.Decode(&out); err != nil {
+			return err
+		}
+		*c = ClaudeDeviceIDConfig(out)
+		return nil
+	default:
+		return fmt.Errorf("device-id must be a string or mapping")
+	}
+}
+
+func (c ClaudeDeviceIDConfig) Value() string {
+	return strings.TrimSpace(c.Default)
+}
+
+func (c ClaudeDeviceIDConfig) ValueForOS(osName string) string {
+	switch strings.ToLower(strings.TrimSpace(osName)) {
+	case "windows", "win32", "win":
+		if v := strings.TrimSpace(c.Windows); v != "" {
+			return v
+		}
+	case "macos", "darwin", "mac", "osx", "os x":
+		if v := strings.TrimSpace(c.MacOS); v != "" {
+			return v
+		}
+	}
+	return c.Value()
 }
 
 // CodexHeaderDefaults configures fallback header values injected into Codex
@@ -873,6 +920,10 @@ func (cfg *Config) SanitizeClaudeHeaderDefaults() {
 	cfg.ClaudeHeaderDefaults.OS = strings.TrimSpace(cfg.ClaudeHeaderDefaults.OS)
 	cfg.ClaudeHeaderDefaults.Arch = strings.TrimSpace(cfg.ClaudeHeaderDefaults.Arch)
 	cfg.ClaudeHeaderDefaults.Timeout = strings.TrimSpace(cfg.ClaudeHeaderDefaults.Timeout)
+	cfg.ClaudeHeaderDefaults.DeviceID.Default = strings.TrimSpace(cfg.ClaudeHeaderDefaults.DeviceID.Default)
+	cfg.ClaudeHeaderDefaults.DeviceID.MacOS = strings.TrimSpace(cfg.ClaudeHeaderDefaults.DeviceID.MacOS)
+	cfg.ClaudeHeaderDefaults.DeviceID.Windows = strings.TrimSpace(cfg.ClaudeHeaderDefaults.DeviceID.Windows)
+	cfg.ClaudeHeaderDefaults.AccountUUID = strings.TrimSpace(cfg.ClaudeHeaderDefaults.AccountUUID)
 }
 
 // SanitizeOAuthModelAlias normalizes and deduplicates global OAuth model name aliases.
