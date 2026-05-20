@@ -238,11 +238,7 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
 	if claudeCodePassthrough {
 		bodyForUpstream = bytes.Clone(req.Payload)
 		bodyForTranslation = bodyForUpstream
-		var cfgDeviceID, cfgAccountUUID string
-		if e.cfg != nil {
-			cfgDeviceID = strings.TrimSpace(e.cfg.ClaudeHeaderDefaults.DeviceID)
-			cfgAccountUUID = strings.TrimSpace(e.cfg.ClaudeHeaderDefaults.AccountUUID)
-		}
+		cfgDeviceID, cfgAccountUUID := resolveClaudePassthroughIdentity(ctx, e.cfg, opts.Headers)
 		bodyForUpstream = overridePassthroughUserID(bodyForUpstream, cfgDeviceID, cfgAccountUUID)
 	} else {
 		body := sdktranslator.TranslateRequest(from, to, baseModel, req.Payload, stream)
@@ -301,7 +297,9 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
 			}
 		}
 	}
-	bodyForUpstream = removeBillingHeaderFromSystem(bodyForUpstream)
+	if !claudeCodePassthrough {
+		bodyForUpstream = removeBillingHeaderFromSystem(bodyForUpstream)
+	}
 	if oauthToken {
 		bodyForUpstream = signAnthropicMessagesBody(bodyForUpstream)
 	}
@@ -313,7 +311,9 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
 	}
 	reporter.SetTranslatedReasoningEffort(bodyForUpstream, to.String())
 
-	bodyForUpstream = removeBillingHeaderFromSystem(bodyForUpstream)
+	if !claudeCodePassthrough {
+		bodyForUpstream = removeBillingHeaderFromSystem(bodyForUpstream)
+	}
 
 	url := fmt.Sprintf("%s/v1/messages?beta=true", baseURL)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyForUpstream))
@@ -500,11 +500,7 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 	if claudeCodePassthrough {
 		bodyForUpstream = bytes.Clone(req.Payload)
 		bodyForTranslation = bodyForUpstream
-		var cfgDeviceID, cfgAccountUUID string
-		if e.cfg != nil {
-			cfgDeviceID = strings.TrimSpace(e.cfg.ClaudeHeaderDefaults.DeviceID)
-			cfgAccountUUID = strings.TrimSpace(e.cfg.ClaudeHeaderDefaults.AccountUUID)
-		}
+		cfgDeviceID, cfgAccountUUID := resolveClaudePassthroughIdentity(ctx, e.cfg, opts.Headers)
 		bodyForUpstream = overridePassthroughUserID(bodyForUpstream, cfgDeviceID, cfgAccountUUID)
 	} else {
 		body := sdktranslator.TranslateRequest(from, to, baseModel, req.Payload, true)
@@ -560,7 +556,9 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 			}
 		}
 	}
-	bodyForUpstream = removeBillingHeaderFromSystem(bodyForUpstream)
+	if !claudeCodePassthrough {
+		bodyForUpstream = removeBillingHeaderFromSystem(bodyForUpstream)
+	}
 	if oauthToken {
 		bodyForUpstream = signAnthropicMessagesBody(bodyForUpstream)
 	}
@@ -571,7 +569,9 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 	}
 	reporter.SetTranslatedReasoningEffort(bodyForUpstream, to.String())
 
-	bodyForUpstream = removeBillingHeaderFromSystem(bodyForUpstream)
+	if !claudeCodePassthrough {
+		bodyForUpstream = removeBillingHeaderFromSystem(bodyForUpstream)
+	}
 
 	url := fmt.Sprintf("%s/v1/messages?beta=true", baseURL)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyForUpstream))
@@ -807,11 +807,7 @@ func (e *ClaudeExecutor) CountTokens(ctx context.Context, auth *cliproxyauth.Aut
 	var body []byte
 	if claudeCodePassthrough {
 		body = bytes.Clone(req.Payload)
-		var cfgDeviceID, cfgAccountUUID string
-		if e.cfg != nil {
-			cfgDeviceID = strings.TrimSpace(e.cfg.ClaudeHeaderDefaults.DeviceID)
-			cfgAccountUUID = strings.TrimSpace(e.cfg.ClaudeHeaderDefaults.AccountUUID)
-		}
+		cfgDeviceID, cfgAccountUUID := resolveClaudePassthroughIdentity(ctx, e.cfg, opts.Headers)
 		body = overridePassthroughUserID(body, cfgDeviceID, cfgAccountUUID)
 	} else {
 		body = sdktranslator.TranslateRequest(from, to, baseModel, req.Payload, stream)
@@ -836,7 +832,9 @@ func (e *ClaudeExecutor) CountTokens(ctx context.Context, auth *cliproxyauth.Aut
 	}
 	body = sanitizeClaudeMessagesForClaudeUpstreamWithDebug(ctx, body, baseModel)
 
-	body = removeBillingHeaderFromSystem(body)
+	if !claudeCodePassthrough {
+		body = removeBillingHeaderFromSystem(body)
+	}
 
 	url := fmt.Sprintf("%s/v1/messages/count_tokens?beta=true", baseURL)
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
@@ -1207,6 +1205,10 @@ func applyClaudeHeaders(r *http.Request, auth *cliproxyauth.Auth, apiKey string,
 			}
 		}
 	}
+	if isOAuthRequest && oauthSource == oauthClientClaudeCode {
+		applyClaudeCodePassthroughHeaders(r, ginHeaders, apiKey)
+		return
+	}
 	// All OAuth sources (OpenCode, OpenClaw, unknown) now align with Claude Code
 	// thinking visibility: redact-thinking-2026-02-12 is kept so the server returns
 	// encrypted thinking blocks (signature_delta), hiding plaintext reasoning.
@@ -1286,6 +1288,16 @@ func applyClaudeHeaders(r *http.Request, auth *cliproxyauth.Auth, apiKey string,
 	// Real Claude Code uses compressed encoding even for streams.
 	// CLIProxyAPI handles decompression via decodeResponseBody before scanning.
 	return nil
+}
+
+func applyClaudeCodePassthroughHeaders(r *http.Request, incoming http.Header, apiKey string) {
+	if incoming != nil {
+		r.Header = incoming.Clone()
+	} else {
+		r.Header = make(http.Header)
+	}
+	r.Header.Del("x-api-key")
+	r.Header.Set("Authorization", "Bearer "+apiKey)
 }
 
 func claudeCreds(a *cliproxyauth.Auth) (apiKey, baseURL string) {
@@ -1847,6 +1859,25 @@ func getClientUserAgent(ctx context.Context) string {
 	return ""
 }
 
+func resolveClaudePassthroughIdentity(ctx context.Context, cfg *config.Config, headers http.Header) (string, string) {
+	if cfg == nil {
+		return "", ""
+	}
+	osName := headers.Get("X-Stainless-Os")
+	if osName == "" {
+		osName = headers.Get("X-Stainless-OS")
+	}
+	if osName == "" {
+		if ginCtx, ok := ctx.Value("gin").(*gin.Context); ok && ginCtx != nil && ginCtx.Request != nil {
+			osName = ginCtx.GetHeader("X-Stainless-Os")
+			if osName == "" {
+				osName = ginCtx.GetHeader("X-Stainless-OS")
+			}
+		}
+	}
+	return cfg.ClaudeHeaderDefaults.DeviceID.ValueForOS(osName), strings.TrimSpace(cfg.ClaudeHeaderDefaults.AccountUUID)
+}
+
 // parseEntrypointFromUA extracts the entrypoint from a Claude Code User-Agent.
 // Format: "claude-cli/x.y.z (external, cli)" → "cli"
 // Format: "claude-cli/x.y.z (external, vscode)"  → "vscode"
@@ -2222,7 +2253,7 @@ func applyCloaking(ctx context.Context, cfg *config.Config, auth *cliproxyauth.A
 	// Inject fake user ID (using device-id/account-uuid from config if available)
 	var cfgDeviceID, cfgAccountUUID string
 	if cfg != nil {
-		cfgDeviceID = strings.TrimSpace(cfg.ClaudeHeaderDefaults.DeviceID)
+		cfgDeviceID = cfg.ClaudeHeaderDefaults.DeviceID.Value()
 		cfgAccountUUID = strings.TrimSpace(cfg.ClaudeHeaderDefaults.AccountUUID)
 	}
 	payload = injectFakeUserID(payload, apiKey, cacheUserID, cfgDeviceID, cfgAccountUUID)

@@ -2510,7 +2510,7 @@ func TestClaudeExecutor_Execute_OAuthClaudeCodePassthroughBody(t *testing.T) {
 	if got := gotHeaders.Get("Anthropic-Beta"); got != incomingBeta {
 		t.Fatalf("Anthropic-Beta = %q, want original %q", got, incomingBeta)
 	}
-	assertClaudeFingerprint(t, gotHeaders, "claude-cli/2.1.119 (external, cli)", "0.81.0", "v24.3.0", "MacOS", "arm64")
+	assertClaudeFingerprint(t, gotHeaders, "claude-cli/2.1.119 (external, cli)", "0.81.0", "v24.3.0", "Windows", "x64")
 	if got := gjson.GetBytes(gotBody, "max_tokens").Int(); got != 64000 {
 		t.Fatalf("max_tokens = %d, want original 64000", got)
 	}
@@ -2730,7 +2730,7 @@ func TestClaudeExecutor_Execute_OAuthPassthroughOverridesUserID(t *testing.T) {
 	})
 	executor := NewClaudeExecutor(&config.Config{
 		ClaudeHeaderDefaults: config.ClaudeHeaderDefaults{
-			DeviceID:    "cfg-device-id-hex",
+			DeviceID:    config.ClaudeDeviceIDConfig{Default: "cfg-device-id-hex"},
 			AccountUUID: "cfg-account-uuid",
 		},
 	})
@@ -2758,5 +2758,58 @@ func TestClaudeExecutor_Execute_OAuthPassthroughOverridesUserID(t *testing.T) {
 	}
 	if gjson.Get(resultUserID, "session_id").String() != "keep-me-session" {
 		t.Fatalf("session_id not preserved: %q", resultUserID)
+	}
+}
+
+func TestClaudeExecutor_Execute_OAuthPassthroughSelectsDeviceIDByOS(t *testing.T) {
+	var gotBodies [][]byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		gotBodies = append(gotBodies, body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"msg_1","type":"message","model":"claude-opus-4-7","role":"assistant","content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":1,"output_tokens":1}}`))
+	}))
+	defer server.Close()
+
+	executor := NewClaudeExecutor(&config.Config{
+		ClaudeHeaderDefaults: config.ClaudeHeaderDefaults{
+			DeviceID: config.ClaudeDeviceIDConfig{
+				MacOS:   "macos-device-id",
+				Windows: "windows-device-id",
+				Default: "default-device-id",
+			},
+			AccountUUID: "cfg-account-uuid",
+		},
+	})
+	auth := &cliproxyauth.Auth{Attributes: map[string]string{
+		"api_key":  "sk-ant-oat01-claude-code",
+		"base_url": server.URL,
+	}}
+	userID := `{"device_id":"old-device-id","account_uuid":"old-uuid","session_id":"keep-me-session"}`
+	payload, _ := sjson.SetBytes([]byte(`{"model":"claude-opus-4-7","messages":[{"role":"user","content":"hi"}]}`), "metadata.user_id", userID)
+
+	for _, tc := range []struct {
+		osHeader string
+		want     string
+	}{
+		{osHeader: "MacOS", want: "macos-device-id"},
+		{osHeader: "Windows", want: "windows-device-id"},
+		{osHeader: "Linux", want: "default-device-id"},
+	} {
+		ctx := newClaudeExecutorTestContext(http.Header{
+			"User-Agent":     []string{"claude-cli/2.1.119 (external, cli)"},
+			"X-Stainless-Os": []string{tc.osHeader},
+		})
+		_, err := executor.Execute(ctx, auth, cliproxyexecutor.Request{
+			Model:   "claude-opus-4-7",
+			Payload: payload,
+		}, cliproxyexecutor.Options{SourceFormat: sdktranslator.FromString("claude"), Headers: http.Header{"X-Stainless-Os": []string{tc.osHeader}}})
+		if err != nil {
+			t.Fatalf("Execute(%s) error: %v", tc.osHeader, err)
+		}
+		resultUserID := gjson.GetBytes(gotBodies[len(gotBodies)-1], "metadata.user_id").String()
+		if got := gjson.Get(resultUserID, "device_id").String(); got != tc.want {
+			t.Fatalf("device_id for %s = %q, want %q", tc.osHeader, got, tc.want)
+		}
 	}
 }
