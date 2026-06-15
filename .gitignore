@@ -40,10 +40,13 @@ GEMINI.md
 .claude/*
 .gemini/*
 .serena/*
+.opencode/*
+.tokensave/*
+.omo/*
+.sisyphus/*
 .agent/*
 .agents
 .agents/*
-.opencode/*
 .idea/*
 .beads/*
 .bmad/*

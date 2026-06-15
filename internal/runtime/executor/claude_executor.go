@@ -1207,7 +1207,7 @@ func applyClaudeHeaders(r *http.Request, auth *cliproxyauth.Auth, apiKey string,
 	}
 	if isOAuthRequest && oauthSource == oauthClientClaudeCode {
 		applyClaudeCodePassthroughHeaders(r, ginHeaders, apiKey)
-		return
+		return nil
 	}
 	// All OAuth sources (OpenCode, OpenClaw, unknown) now align with Claude Code
 	// thinking visibility: redact-thinking-2026-02-12 is kept so the server returns
