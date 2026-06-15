@@ -1,0 +1,791 @@
+{
+  "inputs": {
+    "cliproxyapi_log": "/Users/wykk/Projects/CLIProxyAPI/log/cliproxyapi-oups4.7-log.log",
+    "claudecode_capture": "/Users/wykk/Projects/CLIProxyAPI/log/claude_opus4.7_capture.json"
+  },
+  "outputs": {
+    "cliproxyapi_user_redacted": "/Users/wykk/Projects/CLIProxyAPI/log/cliproxyapi-oups4.7-request.user-redacted.json",
+    "cliproxyapi_user_prompts_extracted": "/Users/wykk/Projects/CLIProxyAPI/log/cliproxyapi-oups4.7-user-prompts.extracted.json",
+    "claudecode_user_redacted_for_comparison": "/Users/wykk/Projects/CLIProxyAPI/log/claude_opus4.7_capture.user-redacted.json"
+  },
+  "counts": {
+    "cliproxyapi_user_text_blocks": 21,
+    "claudecode_user_text_blocks": 7,
+    "diff_entries_after_user_redaction": 59
+  },
+  "top_level": {
+    "cliproxyapi_keys": [
+      "context_management",
+      "max_tokens",
+      "messages",
+      "metadata",
+      "model",
+      "output_config",
+      "stream",
+      "system",
+      "thinking",
+      "tools"
+    ],
+    "claudecode_keys": [
+      "context_management",
+      "max_tokens",
+      "messages",
+      "metadata",
+      "model",
+      "output_config",
+      "stream",
+      "system",
+      "thinking",
+      "tools"
+    ]
+  },
+  "diffs": [
+    {
+      "path": "messages",
+      "kind": "list_length",
+      "cliproxyapi_len": 169,
+      "claudecode_len": 1
+    },
+    {
+      "path": "messages[0].content[0].text",
+      "kind": "value",
+      "cliproxyapi": {
+        "type": "str",
+        "len": 59,
+        "sha256_16": "3d6cfd3aef9ffae1",
+        "preview": "<USER_PROMPT_REDACTED chars=593 sha256_16=c3dd3f3417f2030d>"
+      },
+      "claudecode": {
+        "type": "str",
+        "len": 60,
+        "sha256_16": "2184cd6df01981e1",
+        "preview": "<USER_PROMPT_REDACTED chars=1657 sha256_16=3c40d4475b9505d2>"
+      }
+    },
+    {
+      "path": "messages[0].content[1].text",
+      "kind": "value",
+      "cliproxyapi": {
+        "type": "str",
+        "len": 60,
+        "sha256_16": "c4a645e6ba97a86e",
+        "preview": "<USER_PROMPT_REDACTED chars=3800 sha256_16=36c3a9054ea08548>"
+      },
+      "claudecode": {
+        "type": "str",
+        "len": 60,
+        "sha256_16": "06c1d53008e6b273",
+        "preview": "<USER_PROMPT_REDACTED chars=3008 sha256_16=00310c600d8bfdc9>"
+      }
+    },
+    {
+      "path": "messages[0].content[2].text",
+      "kind": "value",
+      "cliproxyapi": {
+        "type": "str",
+        "len": 61,
+        "sha256_16": "4517c3866738e6a1",
+        "preview": "<USER_PROMPT_REDACTED chars=13850 sha256_16=3ad4da951139ada5>"
+      },
+      "claudecode": {
+        "type": "str",
+        "len": 61,
+        "sha256_16": "867cab96c66dbb9c",
+        "preview": "<USER_PROMPT_REDACTED chars=12334 sha256_16=7812279ea7489c47>"
+      }
+    },
+    {
+      "path": "messages[0].content[4].text",
+      "kind": "value",
+      "cliproxyapi": {
+        "type": "str",
+        "len": 59,
+        "sha256_16": "9fea65107febf94d",
+        "preview": "<USER_PROMPT_REDACTED chars=133 sha256_16=33513c3fb501cf4b>"
+      },
+      "claudecode": {
+        "type": "str",
+        "len": 59,
+        "sha256_16": "06788ef3d52cf73b",
+        "preview": "<USER_PROMPT_REDACTED chars=136 sha256_16=b3e3219f1e5a9c26>"
+      }
+    },
+    {
+      "path": "messages[0].content[6].cache_control",
+      "kind": "missing_in_cliproxyapi",
+      "claudecode": {
+        "type": "dict",
+        "keys": [
+          "ttl",
+          "type"
+        ]
+      }
+    },
+    {
+      "path": "messages[0].content[6].text",
+      "kind": "value",
+      "cliproxyapi": {
+        "type": "str",
+        "len": 60,
+        "sha256_16": "c68161c7fdff9f77",
+        "preview": "<USER_PROMPT_REDACTED chars=3322 sha256_16=dc4dd9578f6c63ee>"
+      },
+      "claudecode": {
+        "type": "str",
+        "len": 58,
+        "sha256_16": "70919189bd02638b",
+        "preview": "<USER_PROMPT_REDACTED chars=11 sha256_16=e8e9561aecb0c607>"
+      }
+    },
+    {
+      "path": "metadata.user_id",
+      "kind": "value",
+      "cliproxyapi": {
+        "type": "str",
+        "len": 186,
+        "sha256_16": "3be753bb739004dc",
+        "preview": "{\"device_id\":\"93ac1cf13e043021ef05754e9d47f6ffc4f228954785b7f40b281a4937b11b3d\",\"account_uuid\":\"0551c930-d213-4195-a131-"
+      },
+      "claudecode": {
+        "type": "str",
+        "len": 186,
+        "sha256_16": "61d66216d4e9b4bb",
+        "preview": "{\"device_id\":\"93ac1cf13e043021ef05754e9d47f6ffc4f228954785b7f40b281a4937b11b3d\",\"account_uuid\":\"906b823d-823e-4c3e-893d-"
+      }
+    },
+    {
+      "path": "output_config.effort",
+      "kind": "value",
+      "cliproxyapi": {
+        "type": "str",
+        "len": 5,
+        "sha256_16": "b5255978be8e9dde",
+        "preview": "xhigh"
+      },
+      "claudecode": {
+        "type": "str",
+        "len": 3,
+        "sha256_16": "9baf3a40312f3984",
+        "preview": "max"
+      }
+    },
+    {
+      "path": "system",
+      "kind": "list_length",
+      "cliproxyapi_len": 2,
+      "claudecode_len": 3
+    },
+    {
+      "path": "system[0].cache_control",
+      "kind": "missing_in_claudecode",
+      "cliproxyapi": {
+        "type": "dict",
+        "keys": [
+          "type"
+        ]
+      }
+    },
+    {
+      "path": "system[1].cache_control.scope",
+      "kind": "missing_in_cliproxyapi",
+      "claudecode": {
+        "type": "str",
+        "len": 6,
+        "sha256_16": "8001c27439650c5c",
+        "preview": "global"
+      }
+    },
+    {
+      "path": "system[1].cache_control.ttl",
+      "kind": "missing_in_cliproxyapi",
+      "claudecode": {
+        "type": "str",
+        "len": 2,
+        "sha256_16": "894816281e236420",
+        "preview": "1h"
+      }
+    },
+    {
+      "path": "system[1].text",
+      "kind": "value",
+      "cliproxyapi": {
+        "type": "str",
+        "len": 27814,
+        "sha256_16": "747cbb8b30707f31",
+        "preview": "\nYou are an interactive agent that helps users with software engineering tasks. Use the instructions below and the tools"
+      },
+      "claudecode": {
+        "type": "str",
+        "len": 9925,
+        "sha256_16": "5ba7d629e07799ff",
+        "preview": "\nYou are an interactive agent that helps users with software engineering tasks. Use the instructions below and the tools"
+      }
+    },
+    {
+      "path": "tools",
+      "kind": "list_length",
+      "cliproxyapi_len": 285,
+      "claudecode_len": 8
+    },
+    {
+      "path": "tools[0].description",
+      "kind": "value",
+      "cliproxyapi": {
+        "type": "str",
+        "len": 7932,
+        "sha256_16": "428919d6d99ed017",
+        "preview": "Launch a new agent to handle complex, multi-step tasks. Each agent type has specific capabilities and tools available to"
+      },
+      "claudecode": {
+        "type": "str",
+        "len": 7691,
+        "sha256_16": "a23ccb2ce1fb58dd",
+        "preview": "Launch a new agent to handle complex, multi-step tasks. Each agent type has specific capabilities and tools available to"
+      }
+    },
+    {
+      "path": "tools[2].description",
+      "kind": "value",
+      "cliproxyapi": {
+        "type": "str",
+        "len": 10189,
+        "sha256_16": "5c87e194919410fb",
+        "preview": "Executes a given bash command and returns its output.\n\nThe working directory persists between commands, but shell state "
+      },
+      "claudecode": {
+        "type": "str",
+        "len": 10419,
+        "sha256_16": "6c3181cb894b0b79",
+        "preview": "Executes a given bash command and returns its output.\n\nThe working directory persists between commands, but shell state "
+      }
+    },
+    {
+      "path": "tools[3].description",
+      "kind": "value",
+      "cliproxyapi": {
+        "type": "str",
+        "len": 2924,
+        "sha256_16": "0ad661417250fc33",
+        "preview": "Schedule a prompt to be enqueued at a future time. Use for both recurring schedules and one-shot reminders.\n\nUses standa"
+      },
+      "claudecode": {
+        "type": "str",
+        "len": 1094,
+        "sha256_16": "f907faa95966fdc0",
+        "preview": "Performs exact string replacements in files.\n\nUsage:\n- You must use your `Read` tool at least once in the conversation b"
+      }
+    },
+    {
+      "path": "tools[3].input_schema.properties.cron",
+      "kind": "missing_in_claudecode",
+      "cliproxyapi": {
+        "type": "dict",
+        "keys": [
+          "description",
+          "type"
+        ]
+      }
+    },
+    {
+      "path": "tools[3].input_schema.properties.durable",
+      "kind": "missing_in_claudecode",
+      "cliproxyapi": {
+        "type": "dict",
+        "keys": [
+          "description",
+          "type"
+        ]
+      }
+    },
+    {
+      "path": "tools[3].input_schema.properties.file_path",
+      "kind": "missing_in_cliproxyapi",
+      "claudecode": {
+        "type": "dict",
+        "keys": [
+          "description",
+          "type"
+        ]
+      }
+    },
+    {
+      "path": "tools[3].input_schema.properties.new_string",
+      "kind": "missing_in_cliproxyapi",
+      "claudecode": {
+        "type": "dict",
+        "keys": [
+          "description",
+          "type"
+        ]
+      }
+    },
+    {
+      "path": "tools[3].input_schema.properties.old_string",
+      "kind": "missing_in_cliproxyapi",
+      "claudecode": {
+        "type": "dict",
+        "keys": [
+          "description",
+          "type"
+        ]
+      }
+    },
+    {
+      "path": "tools[3].input_schema.properties.prompt",
+      "kind": "missing_in_claudecode",
+      "cliproxyapi": {
+        "type": "dict",
+        "keys": [
+          "description",
+          "type"
+        ]
+      }
+    },
+    {
+      "path": "tools[3].input_schema.properties.recurring",
+      "kind": "missing_in_claudecode",
+      "cliproxyapi": {
+        "type": "dict",
+        "keys": [
+          "description",
+          "type"
+        ]
+      }
+    },
+    {
+      "path": "tools[3].input_schema.properties.replace_all",
+      "kind": "missing_in_cliproxyapi",
+      "claudecode": {
+        "type": "dict",
+        "keys": [
+          "default",
+          "description",
+          "type"
+        ]
+      }
+    },
+    {
+      "path": "tools[3].input_schema.required",
+      "kind": "list_length",
+      "cliproxyapi_len": 2,
+      "claudecode_len": 3
+    },
+    {
+      "path": "tools[3].input_schema.required[0]",
+      "kind": "value",
+      "cliproxyapi": {
+        "type": "str",
+        "len": 4,
+        "sha256_16": "c374eea599bb3c50",
+        "preview": "cron"
+      },
+      "claudecode": {
+        "type": "str",
+        "len": 9,
+        "sha256_16": "1054bb88d1446c8d",
+        "preview": "file_path"
+      }
+    },
+    {
+      "path": "tools[3].input_schema.required[1]",
+      "kind": "value",
+      "cliproxyapi": {
+        "type": "str",
+        "len": 6,
+        "sha256_16": "cf07194ee232eb53",
+        "preview": "prompt"
+      },
+      "claudecode": {
+        "type": "str",
+        "len": 10,
+        "sha256_16": "5fe075210d189874",
+        "preview": "old_string"
+      }
+    },
+    {
+      "path": "tools[3].name",
+      "kind": "value",
+      "cliproxyapi": {
+        "type": "str",
+        "len": 10,
+        "sha256_16": "d3b1f39f782677cb",
+        "preview": "CronCreate"
+      },
+      "claudecode": {
+        "type": "str",
+        "len": 4,
+        "sha256_16": "464c4ffd019e1e96",
+        "preview": "Edit"
+      }
+    },
+    {
+      "path": "tools[4].description",
+      "kind": "value",
+      "cliproxyapi": {
+        "type": "str",
+        "len": 167,
+        "sha256_16": "65963fdf9a1680b4",
+        "preview": "Cancel a cron job previously scheduled with CronCreate. Removes it from .claude/scheduled_tasks.json (durable jobs) or t"
+      },
+      "claudecode": {
+        "type": "str",
+        "len": 1830,
+        "sha256_16": "da6bb571d8b3f6f9",
+        "preview": "Reads a file from the local filesystem. You can access any file directly by using this tool.\nAssume this tool is able to"
+      }
+    },
+    {
+      "path": "tools[4].input_schema.properties.file_path",
+      "kind": "missing_in_cliproxyapi",
+      "claudecode": {
+        "type": "dict",
+        "keys": [
+          "description",
+          "type"
+        ]
+      }
+    },
+    {
+      "path": "tools[4].input_schema.properties.id",
+      "kind": "missing_in_claudecode",
+      "cliproxyapi": {
+        "type": "dict",
+        "keys": [
+          "description",
+          "type"
+        ]
+      }
+    },
+    {
+      "path": "tools[4].input_schema.properties.limit",
+      "kind": "missing_in_cliproxyapi",
+      "claudecode": {
+        "type": "dict",
+        "keys": [
+          "description",
+          "exclusiveMinimum",
+          "maximum",
+          "type"
+        ]
+      }
+    },
+    {
+      "path": "tools[4].input_schema.properties.offset",
+      "kind": "missing_in_cliproxyapi",
+      "claudecode": {
+        "type": "dict",
+        "keys": [
+          "description",
+          "maximum",
+          "minimum",
+          "type"
+        ]
+      }
+    },
+    {
+      "path": "tools[4].input_schema.properties.pages",
+      "kind": "missing_in_cliproxyapi",
+      "claudecode": {
+        "type": "dict",
+        "keys": [
+          "description",
+          "type"
+        ]
+      }
+    },
+    {
+      "path": "tools[4].input_schema.required[0]",
+      "kind": "value",
+      "cliproxyapi": {
+        "type": "str",
+        "len": 2,
+        "sha256_16": "a56145270ce6b3be",
+        "preview": "id"
+      },
+      "claudecode": {
+        "type": "str",
+        "len": 9,
+        "sha256_16": "1054bb88d1446c8d",
+        "preview": "file_path"
+      }
+    },
+    {
+      "path": "tools[4].name",
+      "kind": "value",
+      "cliproxyapi": {
+        "type": "str",
+        "len": 10,
+        "sha256_16": "997622e5bd498fc8",
+        "preview": "CronDelete"
+      },
+      "claudecode": {
+        "type": "str",
+        "len": 4,
+        "sha256_16": "9b9a8d05a7ec353b",
+        "preview": "Read"
+      }
+    },
+    {
+      "path": "tools[5].description",
+      "kind": "value",
+      "cliproxyapi": {
+        "type": "str",
+        "len": 106,
+        "sha256_16": "5b979dcacd41be3e",
+        "preview": "List all cron jobs scheduled via CronCreate, both durable (.claude/scheduled_tasks.json) and session-only."
+      },
+      "claudecode": {
+        "type": "str",
+        "len": 1315,
+        "sha256_16": "6cb68f017c15da00",
+        "preview": "Execute a skill within the main conversation\n\nWhen users ask you to perform tasks, check if any of the available skills "
+      }
+    },
+    {
+      "path": "tools[5].input_schema.properties.args",
+      "kind": "missing_in_cliproxyapi",
+      "claudecode": {
+        "type": "dict",
+        "keys": [
+          "description",
+          "type"
+        ]
+      }
+    },
+    {
+      "path": "tools[5].input_schema.properties.skill",
+      "kind": "missing_in_cliproxyapi",
+      "claudecode": {
+        "type": "dict",
+        "keys": [
+          "description",
+          "type"
+        ]
+      }
+    },
+    {
+      "path": "tools[5].input_schema.required",
+      "kind": "missing_in_cliproxyapi",
+      "claudecode": {
+        "type": "list",
+        "len": 1
+      }
+    },
+    {
+      "path": "tools[5].name",
+      "kind": "value",
+      "cliproxyapi": {
+        "type": "str",
+        "len": 8,
+        "sha256_16": "17630c4b25f34cb8",
+        "preview": "CronList"
+      },
+      "claudecode": {
+        "type": "str",
+        "len": 5,
+        "sha256_16": "6df1bb18a59ab97d",
+        "preview": "Skill"
+      }
+    },
+    {
+      "path": "tools[6].description",
+      "kind": "value",
+      "cliproxyapi": {
+        "type": "str",
+        "len": 1094,
+        "sha256_16": "f907faa95966fdc0",
+        "preview": "Performs exact string replacements in files.\n\nUsage:\n- You must use your `Read` tool at least once in the conversation b"
+      },
+      "claudecode": {
+        "type": "str",
+        "len": 953,
+        "sha256_16": "88033eceb421f1c2",
+        "preview": "Fetches full schema definitions for deferred tools so they can be called.\n\nDeferred tools appear by name in <system-remi"
+      }
+    },
+    {
+      "path": "tools[6].input_schema.properties.file_path",
+      "kind": "missing_in_claudecode",
+      "cliproxyapi": {
+        "type": "dict",
+        "keys": [
+          "description",
+          "type"
+        ]
+      }
+    },
+    {
+      "path": "tools[6].input_schema.properties.max_results",
+      "kind": "missing_in_cliproxyapi",
+      "claudecode": {
+        "type": "dict",
+        "keys": [
+          "default",
+          "description",
+          "type"
+        ]
+      }
+    },
+    {
+      "path": "tools[6].input_schema.properties.new_string",
+      "kind": "missing_in_claudecode",
+      "cliproxyapi": {
+        "type": "dict",
+        "keys": [
+          "description",
+          "type"
+        ]
+      }
+    },
+    {
+      "path": "tools[6].input_schema.properties.old_string",
+      "kind": "missing_in_claudecode",
+      "cliproxyapi": {
+        "type": "dict",
+        "keys": [
+          "description",
+          "type"
+        ]
+      }
+    },
+    {
+      "path": "tools[6].input_schema.properties.query",
+      "kind": "missing_in_cliproxyapi",
+      "claudecode": {
+        "type": "dict",
+        "keys": [
+          "description",
+          "type"
+        ]
+      }
+    },
+    {
+      "path": "tools[6].input_schema.properties.replace_all",
+      "kind": "missing_in_claudecode",
+      "cliproxyapi": {
+        "type": "dict",
+        "keys": [
+          "default",
+          "description",
+          "type"
+        ]
+      }
+    },
+    {
+      "path": "tools[6].input_schema.required",
+      "kind": "list_length",
+      "cliproxyapi_len": 3,
+      "claudecode_len": 2
+    },
+    {
+      "path": "tools[6].input_schema.required[0]",
+      "kind": "value",
+      "cliproxyapi": {
+        "type": "str",
+        "len": 9,
+        "sha256_16": "1054bb88d1446c8d",
+        "preview": "file_path"
+      },
+      "claudecode": {
+        "type": "str",
+        "len": 5,
+        "sha256_16": "a8b771920b8319e4",
+        "preview": "query"
+      }
+    },
+    {
+      "path": "tools[6].input_schema.required[1]",
+      "kind": "value",
+      "cliproxyapi": {
+        "type": "str",
+        "len": 10,
+        "sha256_16": "5fe075210d189874",
+        "preview": "old_string"
+      },
+      "claudecode": {
+        "type": "str",
+        "len": 11,
+        "sha256_16": "2b7b98e6ec6c7a64",
+        "preview": "max_results"
+      }
+    },
+    {
+      "path": "tools[6].name",
+      "kind": "value",
+      "cliproxyapi": {
+        "type": "str",
+        "len": 4,
+        "sha256_16": "464c4ffd019e1e96",
+        "preview": "Edit"
+      },
+      "claudecode": {
+        "type": "str",
+        "len": 10,
+        "sha256_16": "3161b03bc700f758",
+        "preview": "ToolSearch"
+      }
+    },
+    {
+      "path": "tools[7].description",
+      "kind": "value",
+      "cliproxyapi": {
+        "type": "str",
+        "len": 4016,
+        "sha256_16": "1a88ba81c0bbb488",
+        "preview": "Use this tool proactively when you're about to start a non-trivial implementation task. Getting user sign-off on your ap"
+      },
+      "claudecode": {
+        "type": "str",
+        "len": 618,
+        "sha256_16": "70103362310e68e4",
+        "preview": "Writes a file to the local filesystem.\n\nUsage:\n- This tool will overwrite the existing file if there is one at the provi"
+      }
+    },
+    {
+      "path": "tools[7].input_schema.properties.content",
+      "kind": "missing_in_cliproxyapi",
+      "claudecode": {
+        "type": "dict",
+        "keys": [
+          "description",
+          "type"
+        ]
+      }
+    },
+    {
+      "path": "tools[7].input_schema.properties.file_path",
+      "kind": "missing_in_cliproxyapi",
+      "claudecode": {
+        "type": "dict",
+        "keys": [
+          "description",
+          "type"
+        ]
+      }
+    },
+    {
+      "path": "tools[7].input_schema.required",
+      "kind": "missing_in_cliproxyapi",
+      "claudecode": {
+        "type": "list",
+        "len": 2
+      }
+    },
+    {
+      "path": "tools[7].name",
+      "kind": "value",
+      "cliproxyapi": {
+        "type": "str",
+        "len": 13,
+        "sha256_16": "f45756d8e85e9e72",
+        "preview": "EnterPlanMode"
+      },
+      "claudecode": {
+        "type": "str",
+        "len": 5,
+        "sha256_16": "3f00927a719345ed",
+        "preview": "Write"
+      }
+    }
+  ]
+}

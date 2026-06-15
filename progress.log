@@ -21,3 +21,5 @@
 [2026-04-15 09:33:57] binary=CLIProxyAPI Version: 6.9.25-claude-2, Commit: none, BuiltAt: unknown
 [2026-04-15 13:38:43] start deploy version=6.9.25-claude-3
 [2026-04-15 13:39:16] start deploy version=6.9.25-claude-3
+[2026-06-10T08:17:18Z] v7.1.61 rebase+deploy: commit=a781afb2, version=7.1.61-preference-1, PID=40523, port=8667, push=forced-update, conflicts=3
+[2026-06-14T05:34:16Z] v7.1.75 official-deploy: commit=83c53d05, version=7.1.75, PID=49762, port=8667, push=skipped(no-rebase), conflicts=0
